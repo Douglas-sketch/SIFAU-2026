@@ -2,225 +2,116 @@ name: Build APK
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
-      - name: Setup Java 21
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Install dependencies
+        run: npm install
 
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Remove viteSingleFile for multi-file build
+      - name: Remove singleFile plugin
         run: |
           node -e "
-          const fs = require('fs');
-          let c = fs.readFileSync('vite.config.ts', 'utf8');
-          c = c.replace(/import.*viteSingleFile.*\n/g, '');
-          c = c.replace(/viteSingleFile\(\),?/g, '');
-          c = c.replace(/,\s*,/g, ',');
-          c = c.replace(/,\s*\]/g, ']');
-          c = c.replace(/\[\s*,/g, '[');
-          fs.writeFileSync('vite.config.ts', c);
-          console.log('vite.config.ts cleaned');
-          console.log(c);
+          let c = require('fs').readFileSync('vite.config.ts','utf8');
+          c = c.replace(/import.*vite-plugin-singlefile.*/g, '');
+          c = c.replace(/viteSingleFile\(\)\s*,?/g, '');
+          require('fs').writeFileSync('vite.config.ts', c);
           "
 
-      - name: Build web app
+      - name: Build web
         run: npm run build
 
-      - name: Initialize Capacitor Android
-        run: |
-          npx cap add android
-          npx cap sync android
+      - name: Add Android platform
+        run: npx cap add android
 
-      - name: Generate App Icons from SVG
+      - name: Sync Android
+        run: npx cap sync android
+
+      - name: Fix Android build config
         run: |
-          npm install sharp
           node -e "
-          const sharp = require('sharp');
           const fs = require('fs');
           const path = require('path');
-          
-          const svgBuffer = fs.readFileSync('public/icon.svg');
-          
-          const sizes = {
-            'mdpi': 48,
-            'hdpi': 72,
-            'xhdpi': 96,
-            'xxhdpi': 144,
-            'xxxhdpi': 192,
-          };
-          
-          const roundSizes = {
-            'mdpi': 48,
-            'hdpi': 72,
-            'xhdpi': 96,
-            'xxhdpi': 144,
-            'xxxhdpi': 192,
-          };
 
-          async function generate() {
-            for (const [density, size] of Object.entries(sizes)) {
-              const dir = 'android/app/src/main/res/mipmap-' + density;
-              if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-              
-              // Regular icon
-              await sharp(svgBuffer)
-                .resize(size, size)
-                .png()
-                .toFile(path.join(dir, 'ic_launcher.png'));
-              
-              // Round icon (same image, Android handles the rounding)
-              await sharp(svgBuffer)
-                .resize(size, size)
-                .png()
-                .toFile(path.join(dir, 'ic_launcher_round.png'));
-              
-              // Foreground for adaptive icon
-              await sharp(svgBuffer)
-                .resize(Math.round(size * 0.7), Math.round(size * 0.7))
-                .extend({
-                  top: Math.round(size * 0.15),
-                  bottom: Math.round(size * 0.15),
-                  left: Math.round(size * 0.15),
-                  right: Math.round(size * 0.15),
-                  background: { r: 30, g: 58, b: 138, alpha: 1 }
-                })
-                .resize(size, size)
-                .png()
-                .toFile(path.join(dir, 'ic_launcher_foreground.png'));
-              
-              console.log('Generated icons for ' + density + ' (' + size + 'px)');
-            }
-            
-            // Also generate 512px for Play Store
-            const playDir = 'android/app/src/main/res/mipmap-xxxhdpi';
-            await sharp(svgBuffer)
-              .resize(512, 512)
-              .png()
-              .toFile(path.join(playDir, 'ic_launcher_playstore.png'));
-            
-            console.log('All icons generated!');
-          }
-          
-          generate().catch(e => { console.error(e); process.exit(1); });
-          "
-
-      - name: Configure Android Manifest for Deep Links
-        run: |
-          node -e "
-          const fs = require('fs');
-          const manifest = fs.readFileSync('android/app/src/main/AndroidManifest.xml', 'utf8');
-          
-          // Add intent filter for OAuth deep link callback
-          const intentFilter = \`
-                  <intent-filter>
-                      <action android:name=\"android.intent.action.VIEW\" />
-                      <category android:name=\"android.intent.category.DEFAULT\" />
-                      <category android:name=\"android.intent.category.BROWSABLE\" />
-                      <data android:scheme=\"com.sifau.app\" />
-                  </intent-filter>
-                  <intent-filter android:autoVerify=\"true\">
-                      <action android:name=\"android.intent.action.VIEW\" />
-                      <category android:name=\"android.intent.category.DEFAULT\" />
-                      <category android:name=\"android.intent.category.BROWSABLE\" />
-                      <data android:scheme=\"https\" android:host=\"cyuokqtbwydfymfffaqw.supabase.co\" android:pathPrefix=\"/auth/v1/callback\" />
-                  </intent-filter>\`;
-          
-          const updated = manifest.replace(
-            '</activity>',
-            intentFilter + '\n            </activity>'
-          );
-          
-          fs.writeFileSync('android/app/src/main/AndroidManifest.xml', updated);
-          console.log('AndroidManifest.xml updated with deep links');
-          "
-
-      - name: Fix Kotlin duplicate classes
-        run: |
-          node -e "
-          const fs = require('fs');
-          const gradlePath = 'android/app/build.gradle';
-          let gradle = fs.readFileSync(gradlePath, 'utf8');
-          
-          // Add Kotlin exclusions in dependencies
-          if (!gradle.includes('exclude group')) {
-            gradle = gradle.replace(
-              'dependencies {',
-              \`dependencies {
-              configurations.all {
-                  exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
-                  exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
-              }\`
-            );
-          }
-          
-          // Add packaging options
-          if (!gradle.includes('packagingOptions')) {
-            gradle = gradle.replace(
-              'android {',
-              \`android {
-              packagingOptions {
-                  pickFirst '**/*.so'
-                  pickFirst '**/kotlin/**'
-              }\`
-            );
-          }
-          
-          fs.writeFileSync(gradlePath, gradle);
-          console.log('build.gradle fixed');
-          console.log(gradle.substring(0, 500));
-          "
-          
-          # Fix variables.gradle Kotlin version
-          node -e "
-          const fs = require('fs');
+          // Fix variables.gradle
           const varsPath = 'android/variables.gradle';
           if (fs.existsSync(varsPath)) {
             let vars = fs.readFileSync(varsPath, 'utf8');
-            vars = vars.replace(/kotlinVersion\s*=\s*'[^']*'/, \"kotlinVersion = '1.9.22'\");
+            vars = vars.replace(/compileSdkVersion\\s*=\\s*\\d+/, 'compileSdkVersion = 36');
+            vars = vars.replace(/targetSdkVersion\\s*=\\s*\\d+/, 'targetSdkVersion = 36');
             fs.writeFileSync(varsPath, vars);
-            console.log('variables.gradle updated');
-            console.log(vars);
+            console.log('variables.gradle updated to SDK 36');
+          }
+
+          // Fix root build.gradle - update AGP
+          const rootGradle = 'android/build.gradle';
+          if (fs.existsSync(rootGradle)) {
+            let root = fs.readFileSync(rootGradle, 'utf8');
+            root = root.replace(/com\\.android\\.tools\\.build:gradle:[^'\\\"]+/g, 'com.android.tools.build:gradle:8.9.1');
+            fs.writeFileSync(rootGradle, root);
+            console.log('Root build.gradle AGP updated to 8.9.1');
+          }
+
+          // Fix app/build.gradle
+          const appGradle = 'android/app/build.gradle';
+          if (fs.existsSync(appGradle)) {
+            let app = fs.readFileSync(appGradle, 'utf8');
+
+            // Force compileSdk and targetSdk to 36
+            app = app.replace(/compileSdk\\w*\\s+\\d+/g, 'compileSdkVersion 36');
+            app = app.replace(/targetSdk\\w*\\s+\\d+/g, 'targetSdkVersion 36');
+
+            // Add Kotlin exclusions if not present
+            if (!app.includes('exclude group')) {
+              app = app.replace(
+                /dependencies\\s*\\{/,
+                'dependencies {\\n        configurations.all {\\n            exclude group: \\'org.jetbrains.kotlin\\', module: \\'kotlin-stdlib-jdk7\\'\\n            exclude group: \\'org.jetbrains.kotlin\\', module: \\'kotlin-stdlib-jdk8\\'\\n        }\\n        '
+              );
+            }
+
+            // Fix gradle-wrapper.properties to use Gradle 8.12
+            const wrapperPath = 'android/gradle/wrapper/gradle-wrapper.properties';
+            if (fs.existsSync(wrapperPath)) {
+              let wrapper = fs.readFileSync(wrapperPath, 'utf8');
+              wrapper = wrapper.replace(/gradle-[0-9.]+-all\\.zip/, 'gradle-8.12-all.zip');
+              fs.writeFileSync(wrapperPath, wrapper);
+              console.log('Gradle wrapper updated to 8.12');
+            }
+
+            fs.writeFileSync(appGradle, app);
+            console.log('app/build.gradle updated');
           }
           "
+
+      - name: Install Android SDK 36
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0" || true
 
       - name: Build APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --no-daemon
           cd ..
-
-      - name: Rename APK
-        run: |
-          mkdir -p output
-          cp android/app/build/outputs/apk/debug/app-debug.apk output/SIFAU.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: SIFAU-APK
-          path: output/SIFAU.apk
-          retention-days: 90
+          path: android/app/build/outputs/apk/debug/app-debug.apk
