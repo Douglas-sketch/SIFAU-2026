@@ -215,7 +215,16 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
     setPermissionsRequested(true);
 
     try {
-      if (navigator.geolocation) {
+      if (navigator.permissions?.query) {
+        const locPerm = await navigator.permissions.query({ name: 'geolocation' as PermissionName });
+        if (locPerm.state === 'prompt' && navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            () => {},
+            () => {},
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+          );
+        }
+      } else if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           () => {},
           () => {},
@@ -224,15 +233,6 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
       }
     } catch {
       // ignore
-    }
-
-    try {
-      if (navigator.mediaDevices?.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-        stream.getTracks().forEach(track => track.stop());
-      }
-    } catch {
-      // Usuário pode negar permissões; o app continua funcional com limitações.
     }
   }, []);
 
@@ -399,7 +399,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
             <motion.div key="s2" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-4">
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
                 <p className="text-xs md:text-sm text-blue-800">
-                  O app solicita permissões de localização, câmera e microfone para recursos de GPS, fotos e ditado por voz.
+                  O app solicita localização nesta etapa. Câmera e microfone serão solicitados somente quando você usar fotos ou ditado por voz.
                 </p>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

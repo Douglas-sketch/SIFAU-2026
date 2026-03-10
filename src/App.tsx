@@ -82,7 +82,7 @@ function getSession(): string | null {
 
 function clearSession() {
   localStorage.removeItem(AUTH_SESSION);
-  // DON'T remove AUTH_EMAIL_KEY — keep it for storage key
+  localStorage.removeItem(AUTH_EMAIL_KEY);
   // DON'T remove ACCOUNTS_DB — keep saved accounts
 }
 
@@ -234,6 +234,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
               const { Browser } = await import('@capacitor/browser');
               const { App: CapApp } = await import('@capacitor/app');
 
+              let browserFinishedListener: { remove: () => void } | null = null;
               const appUrlListener = await CapApp.addListener('appUrlOpen', async (event: { url: string }) => {
                 const url = new URL(event.url);
                 const params = new URLSearchParams(url.hash.substring(1)); // After #
@@ -253,12 +254,13 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
 
                 await Browser.close();
                 appUrlListener.remove();
+                browserFinishedListener?.remove();
                 setGoogleLoading(false);
               });
 
-              const browserFinishedListener = await Browser.addListener('browserFinished', () => {
+              browserFinishedListener = await Browser.addListener('browserFinished', () => {
                 appUrlListener.remove();
-                browserFinishedListener.remove();
+                browserFinishedListener?.remove();
                 setGoogleLoading(false);
               });
 
@@ -1059,6 +1061,7 @@ function AppContent() {
     clearSession();
     sessionStorage.removeItem('sifau_screen');
     setIsAuthenticated(false);
+    setAuthEmail('anonymous');
     setScreen('home');
     logout();
   };
