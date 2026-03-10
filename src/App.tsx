@@ -229,41 +229,42 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           }
           
           if (data?.url) {
-            // Open the OAuth URL in an in-app browser (Chrome Custom Tab)
+            // Open OAuth inside the app (do not leave the app)
             try {
               const { Browser } = await import('@capacitor/browser');
-              
-              // Listen for the app URL event (when redirect comes back)
               const { App: CapApp } = await import('@capacitor/app');
-              CapApp.addListener('appUrlOpen', async (event: { url: string }) => {
-                // Extract tokens from the redirect URL
+
+              const appUrlListener = await CapApp.addListener('appUrlOpen', async (event: { url: string }) => {
                 const url = new URL(event.url);
                 const params = new URLSearchParams(url.hash.substring(1)); // After #
                 const accessToken = params.get('access_token');
                 const refreshToken = params.get('refresh_token');
-                
+
                 if (accessToken && refreshToken) {
-                  // Set the session in Supabase
                   const { data: sessionData } = await supabase!.auth.setSession({
                     access_token: accessToken,
                     refresh_token: refreshToken,
                   });
-                  
+
                   if (sessionData?.user?.email) {
                     finishAuth(sessionData.user.email, 'google');
                   }
                 }
-                
-                // Close the in-app browser
+
                 await Browser.close();
+                appUrlListener.remove();
                 setGoogleLoading(false);
               });
-              
-              // Open the OAuth URL
+
+              const browserFinishedListener = await Browser.addListener('browserFinished', () => {
+                appUrlListener.remove();
+                browserFinishedListener.remove();
+                setGoogleLoading(false);
+              });
+
               await Browser.open({ url: data.url, windowName: '_self' });
             } catch {
-              // Fallback: open in external browser
-              window.open(data.url, '_blank');
+              setError('Não foi possível abrir o login do Google dentro do app.');
               setGoogleLoading(false);
             }
           } else {
@@ -1008,6 +1009,32 @@ function AppContent() {
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, [showSettings, currentUser, screen, logout]);
+
+  // Android (Capacitor): intercept hardware back to avoid closing app
+  useEffect(() => {
+    let removeListener: (() => void) | undefined;
+
+    const setupBackButton = async () => {
+      const isCapacitor = !!(window as any).Capacitor;
+      if (!isCapacitor) return;
+
+      try {
+        const { App: CapApp } = await import('@capacitor/app');
+        const listener = await CapApp.addListener('backButton', ({ canGoBack }) => {
+          if (canGoBack) {
+            window.history.back();
+          }
+          // Se não houver histórico, não fecha o app.
+        });
+        removeListener = () => listener.remove();
+      } catch {
+        // plugin indisponível no ambiente web
+      }
+    };
+
+    setupBackButton();
+    return () => removeListener?.();
+  }, []);
 
   // Push history state when navigating
   const navigateTo = (newScreen: typeof screen) => {
