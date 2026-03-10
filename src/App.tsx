@@ -1009,6 +1009,32 @@ function AppContent() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [showSettings, currentUser, screen, logout]);
 
+  // Android (Capacitor): intercept hardware back to avoid closing app
+  useEffect(() => {
+    let removeListener: (() => void) | undefined;
+
+    const setupBackButton = async () => {
+      const isCapacitor = !!(window as any).Capacitor;
+      if (!isCapacitor) return;
+
+      try {
+        const { App: CapApp } = await import('@capacitor/app');
+        const listener = await CapApp.addListener('backButton', ({ canGoBack }) => {
+          if (canGoBack) {
+            window.history.back();
+          }
+          // Se não houver histórico, não fecha o app.
+        });
+        removeListener = () => listener.remove();
+      } catch {
+        // plugin indisponível no ambiente web
+      }
+    };
+
+    setupBackButton();
+    return () => removeListener?.();
+  }, []);
+
   // Push history state when navigating
   const navigateTo = (newScreen: typeof screen) => {
     window.history.pushState({ screen: newScreen }, '');
