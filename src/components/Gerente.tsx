@@ -1062,7 +1062,14 @@ function AllDenunciasView({ onSelect }: { onSelect: (d: Denuncia) => void }) {
                       )}
 
                       {d.fotos.length > 0 && (
-                        <p className="text-[10px] md:text-xs text-blue-500 flex items-center gap-0.5 mt-1"><Camera size={9} />{d.fotos.length} foto(s)</p>
+                        <div className="mt-1.5">
+                          <p className="text-[10px] md:text-xs text-blue-500 flex items-center gap-0.5"><Camera size={9} />{d.fotos.length} foto(s)</p>
+                          <img
+                            src={d.fotos[0]}
+                            alt={`Foto da denúncia ${d.protocolo}`}
+                            className="mt-1 h-16 w-full max-w-[120px] object-cover rounded-lg border border-blue-100"
+                          />
+                        </div>
                       )}
                     </div>
                     <ChevronRight size={16} className="text-gray-400 shrink-0 mt-1" />
