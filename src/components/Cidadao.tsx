@@ -123,6 +123,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   const [gpsCoords, setGpsCoords] = useState<{lat: number; lng: number} | null>(null);
   const [transcript, setTranscript] = useState('');
   const [speechSupported, setSpeechSupported] = useState(false);
+  const [permissionsRequested, setPermissionsRequested] = useState(false);
   const recognitionRef = useRef<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -209,6 +210,37 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   }, []);
+
+  const requestRequiredPermissions = useCallback(async () => {
+    setPermissionsRequested(true);
+
+    try {
+      if (navigator.permissions?.query) {
+        const locPerm = await navigator.permissions.query({ name: 'geolocation' as PermissionName });
+        if (locPerm.state === 'prompt' && navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            () => {},
+            () => {},
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+          );
+        }
+      } else if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          () => {},
+          () => {},
+          { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+        );
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (step === 2 && !permissionsRequested) {
+      requestRequiredPermissions();
+    }
+  }, [step, permissionsRequested, requestRequiredPermissions]);
 
   // Speech Recognition - Real voice to text
   const handleRecording = useCallback(() => {
@@ -365,6 +397,11 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 
           {step === 2 && (
             <motion.div key="s2" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <p className="text-xs md:text-sm text-blue-800">
+                  O app solicita localização nesta etapa. Câmera e microfone serão solicitados somente quando você usar fotos ou ditado por voz.
+                </p>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm md:text-base font-medium text-gray-700 mb-1 block">Tipo da Denúncia</label>
