@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Home, Users, ClipboardCheck, LogOut, ArrowLeft, CheckCircle, MapPin,
@@ -803,34 +803,44 @@ function AllDenunciasView({ onSelect }: { onSelect: (d: Denuncia) => void }) {
     }
   }, [showSearch]);
 
-  const getFiscalName = (fiscalId?: string) => {
-    if (!fiscalId) return null;
-    const fiscal = profiles.find(p => p.id === fiscalId);
-    return fiscal || null;
-  };
+  const fiscalById = useMemo(() => {
+    const map = new Map<string, (typeof profiles)[number]>();
+    profiles.forEach((p) => map.set(p.id, p));
+    return map;
+  }, [profiles]);
+
+  const getFiscalName = (fiscalId?: string) => (fiscalId ? fiscalById.get(fiscalId) || null : null);
+
+  const normalizedQuery = useMemo(() => searchQuery.toLowerCase().trim(), [searchQuery]);
 
   // Filter by status first
-  const statusFiltered = filterStatus === 'all' ? denuncias : denuncias.filter(d => d.status === filterStatus);
+  const statusFiltered = useMemo(
+    () => (filterStatus === 'all' ? denuncias : denuncias.filter(d => d.status === filterStatus)),
+    [denuncias, filterStatus]
+  );
 
   // Then filter by search query (protocol, tipo, endereco, fiscal name)
-  const filtered = searchQuery.trim()
-    ? statusFiltered.filter(d => {
-        const q = searchQuery.toLowerCase().trim();
-        const fiscal = getFiscalName(d.fiscal_id);
-        return (
-          d.protocolo.toLowerCase().includes(q) ||
-          d.tipo.toLowerCase().includes(q) ||
-          d.endereco.toLowerCase().includes(q) ||
-          (fiscal && fiscal.nome.toLowerCase().includes(q)) ||
-          (fiscal && fiscal.matricula && fiscal.matricula.toLowerCase().includes(q))
-        );
-      })
-    : statusFiltered;
+  const filtered = useMemo(
+    () => (normalizedQuery
+      ? statusFiltered.filter(d => {
+          const fiscal = getFiscalName(d.fiscal_id);
+          return (
+            d.protocolo.toLowerCase().includes(normalizedQuery) ||
+            d.tipo.toLowerCase().includes(normalizedQuery) ||
+            d.endereco.toLowerCase().includes(normalizedQuery) ||
+            (fiscal && fiscal.nome.toLowerCase().includes(normalizedQuery)) ||
+            (fiscal && fiscal.matricula && fiscal.matricula.toLowerCase().includes(normalizedQuery))
+          );
+        })
+      : statusFiltered),
+    [normalizedQuery, statusFiltered]
+  );
 
   // Check if there's an exact protocol match to highlight
-  const exactMatch = searchQuery.trim()
-    ? filtered.find(d => d.protocolo.toLowerCase() === searchQuery.toLowerCase().trim())
-    : null;
+  const exactMatch = useMemo(
+    () => (normalizedQuery ? filtered.find(d => d.protocolo.toLowerCase() === normalizedQuery) || null : null),
+    [normalizedQuery, filtered]
+  );
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="pb-24 lg:pb-8">
@@ -891,6 +901,9 @@ function AllDenunciasView({ onSelect }: { onSelect: (d: Denuncia) => void }) {
                       )}
                     </motion.p>
                   )}
+                  <p className="text-[11px] text-indigo-300 mt-1.5 ml-1">
+                    Mostrando {filtered.length} de {denuncias.length} denúncia(s)
+                  </p>
                 </div>
               </motion.div>
             )}
@@ -1009,7 +1022,7 @@ function AllDenunciasView({ onSelect }: { onSelect: (d: Denuncia) => void }) {
           <div className="px-4 md:px-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 md:gap-3">
             {filtered.map((d, i) => {
               const fiscal = getFiscalName(d.fiscal_id);
-              const isHighlighted = searchQuery && d.protocolo.toLowerCase().includes(searchQuery.toLowerCase().trim());
+              const isHighlighted = !!normalizedQuery && d.protocolo.toLowerCase().includes(normalizedQuery);
 
               return (
                 <motion.button
@@ -1067,6 +1080,8 @@ function AllDenunciasView({ onSelect }: { onSelect: (d: Denuncia) => void }) {
                           <img
                             src={d.fotos[0]}
                             alt={`Foto da denúncia ${d.protocolo}`}
+                            loading="lazy"
+                            decoding="async"
                             className="mt-1 h-16 w-full max-w-[120px] object-cover rounded-lg border border-blue-100"
                           />
                         </div>
