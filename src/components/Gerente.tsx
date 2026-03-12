@@ -337,7 +337,7 @@ function DesignarView({ denuncia, onBack }: { denuncia: Denuncia; onBack: () => 
 }
 
 function DenunciaDetail({ denuncia, onBack }: { denuncia: Denuncia; onBack: () => void }) {
-  const { profiles, getRelatorio, getAuto, aprovarRelatorio, rejeitarRelatorio } = useApp();
+  const { profiles, historico, getRelatorio, getAuto, aprovarRelatorio, rejeitarRelatorio } = useApp();
   const [showDesignar, setShowDesignar] = useState(false);
   const [showApprovalSuccess, setShowApprovalSuccess] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -347,6 +347,11 @@ function DenunciaDetail({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =
   const fiscal = profiles.find(p => p.id === denuncia.fiscal_id);
   const relatorio = getRelatorio(denuncia.id);
   const auto = getAuto(denuncia.id);
+
+  const edicoesCidadao = historico
+    .filter(h => h.denuncia_id === denuncia.id && h.tipo_acao === 'Denúncia Editada')
+    .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
+  const ultimaEdicao = edicoesCidadao[0] || null;
 
   const handleAprovar = () => {
     aprovarRelatorio(denuncia.id);
@@ -451,6 +456,20 @@ function DenunciaDetail({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =
                 </span>
               </div>
             </div>
+
+            {ultimaEdicao && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                <h4 className="text-sm md:text-base font-semibold text-amber-800 flex items-center gap-2 mb-1">
+                  <Clock size={14} /> Última edição do denunciante
+                </h4>
+                <p className="text-xs md:text-sm text-amber-700">
+                  Editado em {new Date(ultimaEdicao.created_at).toLocaleString('pt-BR')}
+                </p>
+                <p className="text-xs md:text-sm text-amber-700 mt-1">
+                  Alterações: {ultimaEdicao.descricao}
+                </p>
+              </div>
+            )}
 
             {/* Timeline */}
             <div className="bg-white rounded-xl p-4 md:p-5 shadow-sm border">

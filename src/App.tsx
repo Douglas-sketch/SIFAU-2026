@@ -67,6 +67,11 @@ function checkAccount(email: string, password: string): 'ok' | 'wrong_password' 
   return 'ok';
 }
 
+function accountExistsLocal(email: string): boolean {
+  const db = loadAccounts();
+  return !!db[email.toLowerCase().trim()];
+}
+
 function saveSession(email: string) {
   localStorage.setItem(AUTH_SESSION, JSON.stringify({ email, ts: Date.now() }));
   // CRITICAL: Also save to AUTH_EMAIL_KEY so AppContext can read it
@@ -116,33 +121,35 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
     const p = password.trim();
 
     try {
-      // Verificar conta local (sempre funciona)
+      if (supabase) {
+        const { error: authError } = await supabase.auth.signInWithPassword({ email: e, password: p });
+        if (!authError) {
+          saveAccount(e, p);
+          finishAuth(e);
+          return;
+        }
+
+        const msg = (authError.message || '').toLowerCase();
+        if (msg.includes('invalid login credentials')) {
+          setError('E-mail ou senha incorretos. Verifique seus dados.');
+          return;
+        }
+        if (msg.includes('email not confirmed')) {
+          setError('Confirme seu e-mail para entrar na conta.');
+          return;
+        }
+
+        setError('Não foi possível entrar agora. Tente novamente em instantes.');
+        return;
+      }
+
       const result = checkAccount(e, p);
-      
       if (result === 'ok') {
-        // Conta existe e senha correta — entrar!
         finishAuth(e);
         return;
       }
-      
-      if (result === 'wrong_password') {
-        setError('Senha incorreta. Tente novamente.');
-        return;
-      }
-      
-      // Conta não encontrada localmente — tentar Supabase Auth
-      if (supabase) {
-        try {
-          const { error: authError } = await supabase.auth.signInWithPassword({ email: e, password: p });
-          if (!authError) {
-            saveAccount(e, p);
-            finishAuth(e);
-            return;
-          }
-        } catch { /* continuar */ }
-      }
-      
-      setError('Conta não encontrada. Crie uma conta primeiro.');
+
+      setError(result === 'wrong_password' ? 'Senha incorreta. Tente novamente.' : 'Conta não encontrada neste dispositivo. Conecte à internet para validar sua conta.');
     } catch {
       setError('Erro ao conectar. Tente novamente.');
     } finally {
@@ -169,34 +176,49 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
     const p = password.trim();
 
     try {
-      // Verificar se já existe
-      const exists = checkAccount(e, p);
-      if (exists === 'ok' || exists === 'wrong_password') {
-        setError('Este e-mail já está cadastrado. Faça login.');
-        setLoading(false);
+      if (supabase) {
+        const existsRemote = await supa.userAccountExists(e);
+        if (existsRemote) {
+          setError('Este e-mail já está cadastrado. Faça login.');
+          return;
+        }
+
+        const { data, error: signUpError } = await supabase.auth.signUp({
+          email: e,
+          password: p,
+          options: { data: { app: 'sifau' } },
+        });
+
+        if (signUpError) {
+          const msg = (signUpError.message || '').toLowerCase();
+          if (msg.includes('already registered') || msg.includes('already exists')) {
+            setError('Este e-mail já está cadastrado. Faça login.');
+            return;
+          }
+          setError('Não foi possível criar a conta agora. Tente novamente.');
+          return;
+        }
+
+        saveAccount(e, p);
+        if (data?.session) {
+          finishAuth(e);
+        } else {
+          setSuccess('Conta criada com sucesso! Se necessário, confirme seu e-mail para entrar.');
+          setMode('login');
+          setPassword('');
+          setConfirmPassword('');
+        }
         return;
       }
 
-      // Salvar conta localmente (SEMPRE — é a fonte da verdade)
-      saveAccount(e, p);
-      
-      // Tentar criar no Supabase Auth também (melhor esforço)
-      if (supabase) {
-        try {
-          await supabase.auth.signUp({
-            email: e,
-            password: p,
-            options: { data: { app: 'sifau' } },
-          });
-        } catch { /* ignorar — conta local já foi salva */ }
+      if (accountExistsLocal(e)) {
+        setError('Este e-mail já está cadastrado neste dispositivo. Faça login.');
+        return;
       }
-
-      // Entrar automaticamente
+      saveAccount(e, p);
       finishAuth(e);
     } catch {
-      // Mesmo com erro, salvar e entrar
-      saveAccount(e, p);
-      finishAuth(e);
+      setError('Erro ao criar conta. Tente novamente.');
     } finally {
       setLoading(false);
     }

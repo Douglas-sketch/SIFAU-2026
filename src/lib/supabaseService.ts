@@ -275,6 +275,17 @@ export async function createHistorico(h: HistoricoAtividade): Promise<void> {
   } catch { /* */ }
 }
 
+export async function getAllHistorico(): Promise<HistoricoAtividade[]> {
+  if (!ok()) return [];
+  try {
+    const { data } = await supabase!
+      .from('historico_atividades')
+      .select('*')
+      .order('created_at', { ascending: false });
+    return (data || []).map(mapHistorico);
+  } catch { return []; }
+}
+
 // ============================================
 // FOTOS
 // ============================================
@@ -476,6 +487,22 @@ export async function registerUserAccount(email: string, provider: string = 'ema
     }
   } catch (e: any) {
     addLog(`❌ Exceção registrar conta: ${e?.message}`);
+  }
+}
+
+export async function userAccountExists(email: string): Promise<boolean> {
+  if (!supabase || !email || email === 'anonymous') return false;
+  try {
+    const { data, error } = await supabase
+      .from('user_accounts')
+      .select('email')
+      .eq('email', email.toLowerCase())
+      .limit(1)
+      .maybeSingle();
+    if (error) return false;
+    return !!data;
+  } catch {
+    return false;
   }
 }
 
