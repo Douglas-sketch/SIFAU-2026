@@ -594,107 +594,191 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 }
 
 function AcompanharDenuncia({ onBack }: { onBack: () => void }) {
-  const { denuncias, authEmail } = useApp();
+  const { denuncias, authEmail, editMinhaDenuncia } = useApp();
   const [busca, setBusca] = useState('');
-  
-  // Filtrar por email do usuário
-  const minhasDens = denuncias.filter(d => {
-    if (!authEmail || authEmail === 'anonymous') return true;
-    return d.auth_email === authEmail || !d.auth_email;
-  });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [editTipo, setEditTipo] = useState<DenunciaTipo>('Outros');
+  const [editEndereco, setEditEndereco] = useState('');
+  const [editDescricao, setEditDescricao] = useState('');
+  const [editNome, setEditNome] = useState('');
+
+  const cleanAuthEmail = (authEmail || '').toLowerCase();
+  const minhasDens = denuncias.filter(d => !!cleanAuthEmail && cleanAuthEmail !== 'anonymous' && d.auth_email === cleanAuthEmail);
   const filtered = minhasDens.filter(d => d.protocolo.includes(busca) || d.endereco.toLowerCase().includes(busca.toLowerCase()));
+  const selected = selectedId ? minhasDens.find(d => d.id === selectedId) || null : null;
+
+  const openDetail = (id: string) => {
+    const alvo = minhasDens.find(d => d.id === id);
+    if (!alvo) return;
+    setSelectedId(id);
+    setEditMode(false);
+    setEditTipo(alvo.tipo);
+    setEditEndereco(alvo.endereco);
+    setEditDescricao(alvo.descricao);
+    setEditNome(alvo.denunciante_nome || '');
+  };
+
+  const canEdit = (d: { status: string } | null) => {
+    if (!d) return false;
+    return !['aguardando_aprovacao', 'concluida'].includes(d.status);
+  };
+
+  const handleSaveEdit = () => {
+    if (!selected) return;
+    const ok = editMinhaDenuncia(selected.id, {
+      tipo: editTipo,
+      endereco: editEndereco,
+      descricao: editDescricao,
+      denunciante_nome: selected.denunciante_anonimo ? undefined : editNome,
+    });
+    if (ok) setEditMode(false);
+  };
 
   const statusOrder: string[] = ['pendente', 'designada', 'em_vistoria', 'aguardando_aprovacao', 'concluida'];
 
   return (
     <motion.div initial={{ x: 300, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="min-h-screen bg-gray-50">
       <div className="bg-gradient-to-r from-blue-700 to-blue-900 text-white p-4 lg:p-6 flex items-center gap-3">
-        <button onClick={onBack}><ArrowLeft size={24} /></button>
-        <h2 className="text-lg md:text-xl font-bold">Acompanhar Denúncia</h2>
+        <button onClick={() => selected ? setSelectedId(null) : onBack()}><ArrowLeft size={24} /></button>
+        <h2 className="text-lg md:text-xl font-bold">{selected ? 'Detalhes da Denúncia' : 'Acompanhar Denúncia'}</h2>
       </div>
 
       <div className="p-4 md:p-6 max-w-5xl mx-auto">
-        <div className="relative mb-4 md:mb-6">
-          <Search size={18} className="absolute left-3 top-3 md:top-4 text-gray-400" />
-          <input
-            value={busca}
-            onChange={e => setBusca(e.target.value)}
-            placeholder="Buscar por protocolo ou endereço..."
-            className="w-full border rounded-xl pl-10 pr-4 py-3 md:py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 md:text-lg"
-          />
-        </div>
+        {!selected && (
+          <>
+            <div className="relative mb-4 md:mb-6">
+              <Search size={18} className="absolute left-3 top-3 md:top-4 text-gray-400" />
+              <input
+                value={busca}
+                onChange={e => setBusca(e.target.value)}
+                placeholder="Buscar por protocolo ou endereço..."
+                className="w-full border rounded-xl pl-10 pr-4 py-3 md:py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 md:text-lg"
+              />
+            </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
-          {filtered.map((d, i) => {
-            const st = statusLabels[d.status];
-            const currentIdx = statusOrder.indexOf(d.status);
-            return (
-              <motion.div
-                key={d.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05 }}
-                className="bg-white rounded-xl p-4 md:p-5 shadow-sm border"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs md:text-sm font-mono text-gray-500">#{d.protocolo}</span>
-                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${st.color} flex items-center gap-1`}>
-                    {st.icon} {st.label}
-                  </span>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
+              {filtered.map((d, i) => {
+                const st = statusLabels[d.status];
+                const currentIdx = statusOrder.indexOf(d.status);
+                return (
+                  <motion.button
+                    type="button"
+                    key={d.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="bg-white rounded-xl p-4 md:p-5 shadow-sm border text-left"
+                    onClick={() => openDetail(d.id)}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs md:text-sm font-mono text-gray-500">#{d.protocolo}</span>
+                      <span className={`text-xs px-2 py-1 rounded-full font-medium ${st.color} flex items-center gap-1`}>
+                        {st.icon} {st.label}
+                      </span>
+                    </div>
+                    <h3 className="font-semibold text-gray-800 text-sm md:text-base">{d.tipo}</h3>
+                    <p className="text-xs md:text-sm text-gray-500 flex items-center gap-1 mt-1">
+                      <MapPin size={12} /> {d.endereco}
+                    </p>
+                    <div className="mt-3 flex items-center gap-1">
+                      {statusOrder.map((s, si) => (
+                        <React.Fragment key={s}>
+                          <div className={`w-3 h-3 rounded-full ${si <= currentIdx ? 'bg-blue-600' : 'bg-gray-200'}`} />
+                          {si < statusOrder.length - 1 && (
+                            <div className={`flex-1 h-0.5 ${si < currentIdx ? 'bg-blue-600' : 'bg-gray-200'}`} />
+                          )}
+                        </React.Fragment>
+                      ))}
+                    </div>
+                    <p className="text-[10px] md:text-xs text-gray-400 mt-2">Toque para ver detalhes</p>
+                  </motion.button>
+                );
+              })}
+              {filtered.length === 0 && (
+                <div className="text-center py-10 text-gray-400 md:col-span-2 xl:col-span-3">
+                  <Search size={40} className="mx-auto mb-2" />
+                  <p>Nenhuma denúncia encontrada</p>
                 </div>
-                <h3 className="font-semibold text-gray-800 text-sm md:text-base">{d.tipo}</h3>
-                <p className="text-xs md:text-sm text-gray-500 flex items-center gap-1 mt-1">
-                  <MapPin size={12} /> {d.endereco}
-                </p>
+              )}
+            </div>
+          </>
+        )}
 
-                {/* Timeline */}
-                <div className="mt-3 flex items-center gap-1">
-                  {statusOrder.map((s, si) => (
-                    <React.Fragment key={s}>
-                      <div className={`w-3 h-3 rounded-full ${si <= currentIdx ? 'bg-blue-600' : 'bg-gray-200'}`} />
-                      {si < statusOrder.length - 1 && (
-                        <div className={`flex-1 h-0.5 ${si < currentIdx ? 'bg-blue-600' : 'bg-gray-200'}`} />
-                      )}
-                    </React.Fragment>
-                  ))}
-                </div>
-                <div className="flex justify-between text-[9px] md:text-[10px] text-gray-400 mt-1">
-                  <span>Registro</span>
-                  <span>Design.</span>
-                  <span>Vistoria</span>
-                  <span>Análise</span>
-                  <span>Concl.</span>
+        {selected && (
+          <div className="bg-white rounded-2xl border shadow-sm p-4 md:p-6 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs md:text-sm font-mono text-gray-500">#{selected.protocolo}</p>
+                <h3 className="text-lg md:text-2xl font-bold text-gray-800">{selected.tipo}</h3>
+              </div>
+              <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusLabels[selected.status].color} flex items-center gap-1`}>
+                {statusLabels[selected.status].icon} {statusLabels[selected.status].label}
+              </span>
+            </div>
+
+            {!editMode ? (
+              <>
+                <div className="space-y-2 text-sm md:text-base">
+                  <p><span className="text-gray-500">Endereço:</span> {selected.endereco}</p>
+                  <p className="whitespace-pre-wrap"><span className="text-gray-500">Descrição:</span> {selected.descricao}</p>
+                  <p><span className="text-gray-500">Denunciante:</span> {selected.denunciante_anonimo ? 'Anônimo' : selected.denunciante_nome || 'Não informado'}</p>
+                  <p className="text-xs text-gray-500">Última atualização: {new Date(selected.updated_at).toLocaleString('pt-BR')}</p>
                 </div>
 
-                {d.fotos.length > 0 && (
-                  <div className="mt-3">
-                    <PhotoGallery
-                      photos={d.fotos}
-                      label="Suas Fotos Enviadas"
-                      maxPreview={3}
-                      metadata={{
-                        protocolo: d.protocolo,
-                        tipo: d.tipo,
-                        endereco: d.endereco,
-                        data: new Date(d.created_at).toLocaleString('pt-BR'),
-                      }}
-                    />
-                  </div>
+                {selected.fotos.length > 0 && (
+                  <PhotoGallery
+                    photos={selected.fotos}
+                    label="Suas Fotos Enviadas"
+                    maxPreview={6}
+                    metadata={{
+                      protocolo: selected.protocolo,
+                      tipo: selected.tipo,
+                      endereco: selected.endereco,
+                      data: new Date(selected.created_at).toLocaleString('pt-BR'),
+                    }}
+                  />
                 )}
 
-                <p className="text-[10px] md:text-xs text-gray-400 mt-2">
-                  Criado em {new Date(d.created_at).toLocaleDateString('pt-BR')} • SLA: {d.sla_dias} dias
-                </p>
-              </motion.div>
-            );
-          })}
-          {filtered.length === 0 && (
-            <div className="text-center py-10 text-gray-400 md:col-span-2 xl:col-span-3">
-              <Search size={40} className="mx-auto mb-2" />
-              <p>Nenhuma denúncia encontrada</p>
-            </div>
-          )}
-        </div>
+                {canEdit(selected) && (
+                  <button
+                    onClick={() => setEditMode(true)}
+                    className="w-full md:w-auto bg-blue-600 text-white rounded-xl px-5 py-3 font-semibold"
+                  >
+                    Editar denúncia
+                  </button>
+                )}
+              </>
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-sm font-medium text-gray-700 mb-1 block">Tipo</label>
+                  <select value={editTipo} onChange={e => setEditTipo(e.target.value as DenunciaTipo)} className="w-full border rounded-xl px-3 py-2">
+                    {TIPOS.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-700 mb-1 block">Endereço</label>
+                  <input value={editEndereco} onChange={e => setEditEndereco(e.target.value)} className="w-full border rounded-xl px-3 py-2" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-700 mb-1 block">Descrição</label>
+                  <textarea value={editDescricao} onChange={e => setEditDescricao(e.target.value)} rows={4} className="w-full border rounded-xl px-3 py-2" />
+                </div>
+                {!selected.denunciante_anonimo && (
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 mb-1 block">Nome do denunciante</label>
+                    <input value={editNome} onChange={e => setEditNome(e.target.value)} className="w-full border rounded-xl px-3 py-2" />
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <button onClick={() => setEditMode(false)} className="flex-1 border rounded-xl px-4 py-2 font-medium">Cancelar</button>
+                  <button onClick={handleSaveEdit} className="flex-1 bg-green-600 text-white rounded-xl px-4 py-2 font-semibold">Salvar alterações</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </motion.div>
   );
@@ -706,10 +790,8 @@ export default function CidadaoModule({ onLogin, onOpenSettings }: { onLogin: ()
   const { denuncias, authEmail } = useApp();
 
   // Filtrar denúncias pelo email do usuário autenticado
-  const minhasDenuncias = denuncias.filter(d => {
-    if (!authEmail || authEmail === 'anonymous') return true;
-    return d.auth_email === authEmail || !d.auth_email;
-  });
+  const cleanAuthEmail = (authEmail || '').toLowerCase();
+  const minhasDenuncias = denuncias.filter(d => !!cleanAuthEmail && cleanAuthEmail !== 'anonymous' && d.auth_email === cleanAuthEmail);
 
   if (successProtocolo) {
     return (
