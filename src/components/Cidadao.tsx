@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageCircle, Send, X, MapPin, Camera, Plus, ChevronRight, Clock, CheckCircle, AlertCircle, Eye, Search, ArrowLeft, Shield, Mic, MicOff, User, UserX, Settings, Loader, Navigation } from 'lucide-react';
+import { MessageCircle, Send, X, MapPin, Camera, Plus, ChevronRight, Clock, CheckCircle, AlertCircle, Eye, Search, ArrowLeft, Shield, Mic, MicOff, User, UserX, Settings, Loader, Navigation, Copy, Share2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { DenunciaTipo } from '../types';
 import { PhotoGallery } from './PhotoViewer';
@@ -13,6 +13,55 @@ const statusLabels: Record<string, { label: string; color: string; icon: React.R
   aguardando_aprovacao: { label: 'Aguardando Aprovação', color: 'bg-purple-100 text-purple-800', icon: <Clock size={16} /> },
   concluida: { label: 'Concluída', color: 'bg-green-100 text-green-800', icon: <CheckCircle size={16} /> },
 };
+
+
+
+function getStatusGuidance(status: string): { title: string; text: string; tone: string } {
+  switch (status) {
+    case 'pendente':
+      return {
+        title: 'Aguardando triagem',
+        text: 'Sua denúncia foi recebida. Em breve ela será designada para fiscalização.',
+        tone: 'bg-yellow-50 border-yellow-200 text-yellow-800',
+      };
+    case 'designada':
+      return {
+        title: 'Fiscal designado',
+        text: 'A denúncia já tem responsável e deve avançar para vistoria em breve.',
+        tone: 'bg-blue-50 border-blue-200 text-blue-800',
+      };
+    case 'em_vistoria':
+      return {
+        title: 'Vistoria em andamento',
+        text: 'A equipe está apurando os fatos em campo.',
+        tone: 'bg-orange-50 border-orange-200 text-orange-800',
+      };
+    case 'aguardando_aprovacao':
+      return {
+        title: 'Análise final',
+        text: 'O relatório técnico foi enviado e aguarda aprovação do gerente.',
+        tone: 'bg-purple-50 border-purple-200 text-purple-800',
+      };
+    case 'concluida':
+      return {
+        title: 'Processo concluído',
+        text: 'A denúncia foi finalizada com sucesso.',
+        tone: 'bg-green-50 border-green-200 text-green-800',
+      };
+    default:
+      return {
+        title: 'Em processamento',
+        text: 'Sua denúncia está em andamento.',
+        tone: 'bg-gray-50 border-gray-200 text-gray-700',
+      };
+  }
+}
+
+function getSlaProgress(createdAt: string, slaDias: number): number {
+  const totalMs = Math.max(1, slaDias * 24 * 60 * 60 * 1000);
+  const elapsed = Math.max(0, Date.now() - new Date(createdAt).getTime());
+  return Math.min(100, Math.round((elapsed / totalMs) * 100));
+}
 
 const chatResponses: Record<string, string> = {
   'anonimato': 'Sim! Você pode fazer denúncias de forma totalmente anônima. Seus dados pessoais não serão compartilhados com ninguém.',
@@ -635,6 +684,29 @@ function AcompanharDenuncia({ onBack }: { onBack: () => void }) {
     if (ok) setEditMode(false);
   };
 
+  const copyProtocol = async (protocolo: string) => {
+    try {
+      await navigator.clipboard.writeText(`#${protocolo}`);
+    } catch {
+      // ignore
+    }
+  };
+
+  const shareDenuncia = async (protocolo: string, tipo: string, status: string) => {
+    const text = `Denúncia ${protocolo}
+Tipo: ${tipo}
+Status: ${statusLabels[status]?.label || status}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `Protocolo ${protocolo}`, text });
+      } else {
+        await navigator.clipboard.writeText(text);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   const statusOrder: string[] = ['pendente', 'designada', 'em_vistoria', 'aguardando_aprovacao', 'concluida'];
 
   return (
@@ -692,6 +764,9 @@ function AcompanharDenuncia({ onBack }: { onBack: () => void }) {
                       ))}
                     </div>
                     <p className="text-[10px] md:text-xs text-gray-400 mt-2">Toque para ver detalhes</p>
+                    <div className={`mt-2 border rounded-lg px-2 py-1.5 ${getStatusGuidance(d.status).tone}`}>
+                      <p className="text-[11px] md:text-xs font-semibold">{getStatusGuidance(d.status).title}</p>
+                    </div>
                   </motion.button>
                 );
               })}
@@ -724,6 +799,30 @@ function AcompanharDenuncia({ onBack }: { onBack: () => void }) {
                   <p className="whitespace-pre-wrap"><span className="text-gray-500">Descrição:</span> {selected.descricao}</p>
                   <p><span className="text-gray-500">Denunciante:</span> {selected.denunciante_anonimo ? 'Anônimo' : selected.denunciante_nome || 'Não informado'}</p>
                   <p className="text-xs text-gray-500">Última atualização: {new Date(selected.updated_at).toLocaleString('pt-BR')}</p>
+                </div>
+
+                <div className={`border rounded-xl p-3 ${getStatusGuidance(selected.status).tone}`}>
+                  <p className="text-sm font-semibold">Próxima etapa: {getStatusGuidance(selected.status).title}</p>
+                  <p className="text-xs md:text-sm mt-1">{getStatusGuidance(selected.status).text}</p>
+                </div>
+
+                <div className="bg-gray-50 border rounded-xl p-3">
+                  <div className="flex justify-between text-xs text-gray-600 mb-1">
+                    <span>Andamento do SLA</span>
+                    <span>{getSlaProgress(selected.created_at, selected.sla_dias)}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-gray-200 rounded-full">
+                    <div className="h-full bg-blue-600 rounded-full transition-all" style={{ width: `${getSlaProgress(selected.created_at, selected.sla_dias)}%` }} />
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button onClick={() => copyProtocol(selected.protocolo)} className="flex-1 border rounded-xl px-3 py-2 text-sm font-medium flex items-center justify-center gap-1.5">
+                    <Copy size={14} /> Copiar protocolo
+                  </button>
+                  <button onClick={() => shareDenuncia(selected.protocolo, selected.tipo, selected.status)} className="flex-1 border rounded-xl px-3 py-2 text-sm font-medium flex items-center justify-center gap-1.5">
+                    <Share2 size={14} /> Compartilhar
+                  </button>
                 </div>
 
                 {selected.fotos.length > 0 && (
@@ -951,6 +1050,7 @@ export default function CidadaoModule({ onLogin, onOpenSettings }: { onLogin: ()
                   <div className="flex-1 min-w-0">
                     <p className="text-sm md:text-base font-medium text-gray-800 truncate">{d.tipo} - {d.endereco}</p>
                     <p className="text-xs md:text-sm text-gray-400">#{d.protocolo}</p>
+                    <p className="text-[11px] text-gray-500 mt-0.5">{getStatusGuidance(d.status).title}</p>
                   </div>
                   <span className={`text-[10px] md:text-xs px-2 py-1 rounded-full font-medium ${st.color} shrink-0`}>
                     {st.label}
