@@ -40,6 +40,7 @@ interface AppState {
   getMensagensConversa: (userId: string, peerId: string) => Mensagem[];
   authEmail: string;
   setAuthEmail: (email: string) => void;
+  editMinhaDenuncia: (id: string, updates: { tipo?: Denuncia['tipo']; endereco?: string; descricao?: string; denunciante_nome?: string }) => boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -214,9 +215,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (ok) {
         console.log('🟢 Supabase ONLINE — sincronizando dados...');
         try {
-          const [profs, dens] = await Promise.all([
+          const [profs, dens, hists] = await Promise.all([
             supa.getAllProfiles(),
             supa.getAllDenuncias(),
+            supa.getAllHistorico(),
           ]);
 
           if (!cancelled && profs.length) {
@@ -233,6 +235,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           if (!cancelled && dens.length) {
             setDenuncias(dens);
+          }
+          if (!cancelled && hists.length) {
+            setHistorico(hists);
           }
         } catch (e) {
           console.warn('⚠️ Erro ao sincronizar:', e);
@@ -273,12 +278,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     syncIntervalRef.current = setInterval(async () => {
       if (!currentUserRef.current) return;
       try {
-        const [freshMsgs, freshDens, freshProfs, freshRels, freshAutos] = await Promise.all([
+        const [freshMsgs, freshDens, freshProfs, freshRels, freshAutos, freshHists] = await Promise.all([
           supa.getMensagens(currentUserRef.current.id),
           supa.getAllDenuncias(),
           supa.getAllProfiles(),
           supa.getAllRelatorios(),
           supa.getAllAutos(),
+          supa.getAllHistorico(),
         ]);
         if (freshMsgs.length) setMensagens(freshMsgs);
         if (freshDens.length) setDenuncias(freshDens);
@@ -296,6 +302,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           });
           return merged;
         });
+        if (freshHists.length) setHistorico(freshHists);
         if (freshAutos.length) setAutos(prev => {
           const merged = [...prev];
           freshAutos.forEach(fa => {
@@ -767,6 +774,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [isOnline, authEmail]);
 
+
+
+  const editMinhaDenuncia = useCallback((id: string, updates: { tipo?: Denuncia['tipo']; endereco?: string; descricao?: string; denunciante_nome?: string }) => {
+    const cleanEmail = (authEmail || getAuthEmail() || 'anonymous').toLowerCase();
+    const alvo = denuncias.find(d => d.id === id);
+    if (!alvo) return false;
+    if (cleanEmail === 'anonymous' || (alvo.auth_email && alvo.auth_email.toLowerCase() !== cleanEmail)) return false;
+    if (['aguardando_aprovacao', 'concluida'].includes(alvo.status)) return false;
+
+    const changed: string[] = [];
+    if (updates.tipo && updates.tipo !== alvo.tipo) changed.push(`tipo: "${alvo.tipo}" → "${updates.tipo}"`);
+    if (updates.endereco && updates.endereco.trim() !== alvo.endereco) changed.push('endereço atualizado');
+    if (updates.descricao && updates.descricao.trim() !== alvo.descricao) changed.push('descrição atualizada');
+    if ((updates.denunciante_nome || '') !== (alvo.denunciante_nome || '')) changed.push('nome do denunciante atualizado');
+    if (!changed.length) return false;
+
+    const now = new Date().toISOString();
+    const patch: Partial<Denuncia> = {
+      tipo: updates.tipo || alvo.tipo,
+      endereco: updates.endereco?.trim() || alvo.endereco,
+      descricao: updates.descricao?.trim() || alvo.descricao,
+      denunciante_nome: updates.denunciante_nome?.trim() || alvo.denunciante_nome,
+      updated_at: now,
+    };
+
+    setDenuncias(prev => prev.map(d => d.id === id ? { ...d, ...patch } : d));
+
+    if (isOnline) {
+      supa.updateDenuncia(id, {
+        tipo: patch.tipo,
+        endereco: patch.endereco,
+        descricao: patch.descricao,
+        denunciante_nome: patch.denunciante_nome,
+        updated_at: now,
+      });
+    }
+
+    const hist: HistoricoAtividade = {
+      id: `hist-${Date.now()}-edit-cid`,
+      fiscal_id: `cid-${cleanEmail}`,
+      denuncia_id: id,
+      tipo_acao: 'Denúncia Editada',
+      pontos: 0,
+      descricao: changed.join('; '),
+      created_at: now,
+    };
+    setHistorico(prev => [hist, ...prev]);
+    if (isOnline) supa.createHistorico(hist);
+
+    addNotification('Denúncia atualizada com sucesso.', 'success');
+    return true;
+  }, [authEmail, denuncias, isOnline, addNotification]);
+
+
   return (
     <AppContext.Provider value={{
       profiles, denuncias, relatorios, autos, historico, mensagens, currentUser, notifications, isOnline,
@@ -774,7 +835,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       upsertRelatorio: upsertRelatorioFn, addAuto, aprovarRelatorio, rejeitarRelatorio, getRelatorio, getAuto,
       addNotification, dismissNotification, getFiscalPontos,
       sendMensagem, marcarLida, getConversas, getMensagensConversa,
-      authEmail, setAuthEmail,
+      authEmail, setAuthEmail, editMinhaDenuncia,
     }}>
       {children}
     </AppContext.Provider>

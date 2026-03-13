@@ -67,6 +67,11 @@ function checkAccount(email: string, password: string): 'ok' | 'wrong_password' 
   return 'ok';
 }
 
+function accountExistsLocal(email: string): boolean {
+  const db = loadAccounts();
+  return !!db[email.toLowerCase().trim()];
+}
+
 function saveSession(email: string) {
   localStorage.setItem(AUTH_SESSION, JSON.stringify({ email, ts: Date.now() }));
   // CRITICAL: Also save to AUTH_EMAIL_KEY so AppContext can read it
@@ -82,7 +87,7 @@ function getSession(): string | null {
 
 function clearSession() {
   localStorage.removeItem(AUTH_SESSION);
-  // DON'T remove AUTH_EMAIL_KEY — keep it for storage key
+  localStorage.removeItem(AUTH_EMAIL_KEY);
   // DON'T remove ACCOUNTS_DB — keep saved accounts
 }
 
@@ -116,33 +121,35 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
     const p = password.trim();
 
     try {
-      // Verificar conta local (sempre funciona)
+      if (supabase) {
+        const { error: authError } = await supabase.auth.signInWithPassword({ email: e, password: p });
+        if (!authError) {
+          saveAccount(e, p);
+          finishAuth(e);
+          return;
+        }
+
+        const msg = (authError.message || '').toLowerCase();
+        if (msg.includes('invalid login credentials')) {
+          setError('E-mail ou senha incorretos. Verifique seus dados.');
+          return;
+        }
+        if (msg.includes('email not confirmed')) {
+          setError('Confirme seu e-mail para entrar na conta.');
+          return;
+        }
+
+        setError('Não foi possível entrar agora. Tente novamente em instantes.');
+        return;
+      }
+
       const result = checkAccount(e, p);
-      
       if (result === 'ok') {
-        // Conta existe e senha correta — entrar!
         finishAuth(e);
         return;
       }
-      
-      if (result === 'wrong_password') {
-        setError('Senha incorreta. Tente novamente.');
-        return;
-      }
-      
-      // Conta não encontrada localmente — tentar Supabase Auth
-      if (supabase) {
-        try {
-          const { error: authError } = await supabase.auth.signInWithPassword({ email: e, password: p });
-          if (!authError) {
-            saveAccount(e, p);
-            finishAuth(e);
-            return;
-          }
-        } catch { /* continuar */ }
-      }
-      
-      setError('Conta não encontrada. Crie uma conta primeiro.');
+
+      setError(result === 'wrong_password' ? 'Senha incorreta. Tente novamente.' : 'Conta não encontrada neste dispositivo. Conecte à internet para validar sua conta.');
     } catch {
       setError('Erro ao conectar. Tente novamente.');
     } finally {
@@ -169,34 +176,49 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
     const p = password.trim();
 
     try {
-      // Verificar se já existe
-      const exists = checkAccount(e, p);
-      if (exists === 'ok' || exists === 'wrong_password') {
-        setError('Este e-mail já está cadastrado. Faça login.');
-        setLoading(false);
+      if (supabase) {
+        const existsRemote = await supa.userAccountExists(e);
+        if (existsRemote) {
+          setError('Este e-mail já está cadastrado. Faça login.');
+          return;
+        }
+
+        const { data, error: signUpError } = await supabase.auth.signUp({
+          email: e,
+          password: p,
+          options: { data: { app: 'sifau' } },
+        });
+
+        if (signUpError) {
+          const msg = (signUpError.message || '').toLowerCase();
+          if (msg.includes('already registered') || msg.includes('already exists')) {
+            setError('Este e-mail já está cadastrado. Faça login.');
+            return;
+          }
+          setError('Não foi possível criar a conta agora. Tente novamente.');
+          return;
+        }
+
+        saveAccount(e, p);
+        if (data?.session) {
+          finishAuth(e);
+        } else {
+          setSuccess('Conta criada com sucesso! Se necessário, confirme seu e-mail para entrar.');
+          setMode('login');
+          setPassword('');
+          setConfirmPassword('');
+        }
         return;
       }
 
-      // Salvar conta localmente (SEMPRE — é a fonte da verdade)
-      saveAccount(e, p);
-      
-      // Tentar criar no Supabase Auth também (melhor esforço)
-      if (supabase) {
-        try {
-          await supabase.auth.signUp({
-            email: e,
-            password: p,
-            options: { data: { app: 'sifau' } },
-          });
-        } catch { /* ignorar — conta local já foi salva */ }
+      if (accountExistsLocal(e)) {
+        setError('Este e-mail já está cadastrado neste dispositivo. Faça login.');
+        return;
       }
-
-      // Entrar automaticamente
+      saveAccount(e, p);
       finishAuth(e);
     } catch {
-      // Mesmo com erro, salvar e entrar
-      saveAccount(e, p);
-      finishAuth(e);
+      setError('Erro ao criar conta. Tente novamente.');
     } finally {
       setLoading(false);
     }
@@ -229,41 +251,44 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           }
           
           if (data?.url) {
-            // Open the OAuth URL in an in-app browser (Chrome Custom Tab)
+            // Open OAuth inside the app (do not leave the app)
             try {
               const { Browser } = await import('@capacitor/browser');
-              
-              // Listen for the app URL event (when redirect comes back)
               const { App: CapApp } = await import('@capacitor/app');
-              CapApp.addListener('appUrlOpen', async (event: { url: string }) => {
-                // Extract tokens from the redirect URL
+
+              let browserFinishedListener: { remove: () => void } | null = null;
+              const appUrlListener = await CapApp.addListener('appUrlOpen', async (event: { url: string }) => {
                 const url = new URL(event.url);
                 const params = new URLSearchParams(url.hash.substring(1)); // After #
                 const accessToken = params.get('access_token');
                 const refreshToken = params.get('refresh_token');
-                
+
                 if (accessToken && refreshToken) {
-                  // Set the session in Supabase
                   const { data: sessionData } = await supabase!.auth.setSession({
                     access_token: accessToken,
                     refresh_token: refreshToken,
                   });
-                  
+
                   if (sessionData?.user?.email) {
                     finishAuth(sessionData.user.email, 'google');
                   }
                 }
-                
-                // Close the in-app browser
+
                 await Browser.close();
+                appUrlListener.remove();
+                browserFinishedListener?.remove();
                 setGoogleLoading(false);
               });
-              
-              // Open the OAuth URL
+
+              browserFinishedListener = await Browser.addListener('browserFinished', () => {
+                appUrlListener.remove();
+                browserFinishedListener?.remove();
+                setGoogleLoading(false);
+              });
+
               await Browser.open({ url: data.url, windowName: '_self' });
             } catch {
-              // Fallback: open in external browser
-              window.open(data.url, '_blank');
+              setError('Não foi possível abrir o login do Google dentro do app.');
               setGoogleLoading(false);
             }
           } else {
@@ -1009,6 +1034,32 @@ function AppContent() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [showSettings, currentUser, screen, logout]);
 
+  // Android (Capacitor): intercept hardware back to avoid closing app
+  useEffect(() => {
+    let removeListener: (() => void) | undefined;
+
+    const setupBackButton = async () => {
+      const isCapacitor = !!(window as any).Capacitor;
+      if (!isCapacitor) return;
+
+      try {
+        const { App: CapApp } = await import('@capacitor/app');
+        const listener = await CapApp.addListener('backButton', ({ canGoBack }) => {
+          if (canGoBack) {
+            window.history.back();
+          }
+          // Se não houver histórico, não fecha o app.
+        });
+        removeListener = () => listener.remove();
+      } catch {
+        // plugin indisponível no ambiente web
+      }
+    };
+
+    setupBackButton();
+    return () => removeListener?.();
+  }, []);
+
   // Push history state when navigating
   const navigateTo = (newScreen: typeof screen) => {
     window.history.pushState({ screen: newScreen }, '');
@@ -1032,6 +1083,7 @@ function AppContent() {
     clearSession();
     sessionStorage.removeItem('sifau_screen');
     setIsAuthenticated(false);
+    setAuthEmail('anonymous');
     setScreen('home');
     logout();
   };

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Home, Users, ClipboardCheck, LogOut, ArrowLeft, CheckCircle, MapPin,
@@ -337,7 +337,7 @@ function DesignarView({ denuncia, onBack }: { denuncia: Denuncia; onBack: () => 
 }
 
 function DenunciaDetail({ denuncia, onBack }: { denuncia: Denuncia; onBack: () => void }) {
-  const { profiles, getRelatorio, getAuto, aprovarRelatorio, rejeitarRelatorio } = useApp();
+  const { profiles, historico, getRelatorio, getAuto, aprovarRelatorio, rejeitarRelatorio } = useApp();
   const [showDesignar, setShowDesignar] = useState(false);
   const [showApprovalSuccess, setShowApprovalSuccess] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -347,6 +347,11 @@ function DenunciaDetail({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =
   const fiscal = profiles.find(p => p.id === denuncia.fiscal_id);
   const relatorio = getRelatorio(denuncia.id);
   const auto = getAuto(denuncia.id);
+
+  const edicoesCidadao = historico
+    .filter(h => h.denuncia_id === denuncia.id && h.tipo_acao === 'Denúncia Editada')
+    .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
+  const ultimaEdicao = edicoesCidadao[0] || null;
 
   const handleAprovar = () => {
     aprovarRelatorio(denuncia.id);
@@ -437,6 +442,10 @@ function DenunciaDetail({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =
             <div className="bg-white rounded-xl p-4 md:p-5 shadow-sm border space-y-2">
               <p className="text-sm md:text-base text-gray-600 flex items-center gap-2"><MapPin size={14} className="text-blue-600" />{denuncia.endereco}</p>
               <p className="text-sm md:text-base text-gray-700">{denuncia.descricao}</p>
+              <p className="text-sm md:text-base text-gray-700">
+                <span className="text-gray-500">Denunciante:</span>{' '}
+                <span className="font-medium">{denuncia.denunciante_anonimo ? 'Anônimo' : denuncia.denunciante_nome || 'N/I'}</span>
+              </p>
               <div className="flex gap-4 text-xs md:text-sm text-gray-500">
                 <span>SLA: {denuncia.sla_dias} dias</span>
                 <span>Pts previstos: {denuncia.pontos_provisorio}</span>
@@ -447,6 +456,20 @@ function DenunciaDetail({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =
                 </span>
               </div>
             </div>
+
+            {ultimaEdicao && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                <h4 className="text-sm md:text-base font-semibold text-amber-800 flex items-center gap-2 mb-1">
+                  <Clock size={14} /> Última edição do denunciante
+                </h4>
+                <p className="text-xs md:text-sm text-amber-700">
+                  Editado em {new Date(ultimaEdicao.created_at).toLocaleString('pt-BR')}
+                </p>
+                <p className="text-xs md:text-sm text-amber-700 mt-1">
+                  Alterações: {ultimaEdicao.descricao}
+                </p>
+              </div>
+            )}
 
             {/* Timeline */}
             <div className="bg-white rounded-xl p-4 md:p-5 shadow-sm border">
@@ -799,34 +822,44 @@ function AllDenunciasView({ onSelect }: { onSelect: (d: Denuncia) => void }) {
     }
   }, [showSearch]);
 
-  const getFiscalName = (fiscalId?: string) => {
-    if (!fiscalId) return null;
-    const fiscal = profiles.find(p => p.id === fiscalId);
-    return fiscal || null;
-  };
+  const fiscalById = useMemo(() => {
+    const map = new Map<string, (typeof profiles)[number]>();
+    profiles.forEach((p) => map.set(p.id, p));
+    return map;
+  }, [profiles]);
+
+  const getFiscalName = (fiscalId?: string) => (fiscalId ? fiscalById.get(fiscalId) || null : null);
+
+  const normalizedQuery = useMemo(() => searchQuery.toLowerCase().trim(), [searchQuery]);
 
   // Filter by status first
-  const statusFiltered = filterStatus === 'all' ? denuncias : denuncias.filter(d => d.status === filterStatus);
+  const statusFiltered = useMemo(
+    () => (filterStatus === 'all' ? denuncias : denuncias.filter(d => d.status === filterStatus)),
+    [denuncias, filterStatus]
+  );
 
   // Then filter by search query (protocol, tipo, endereco, fiscal name)
-  const filtered = searchQuery.trim()
-    ? statusFiltered.filter(d => {
-        const q = searchQuery.toLowerCase().trim();
-        const fiscal = getFiscalName(d.fiscal_id);
-        return (
-          d.protocolo.toLowerCase().includes(q) ||
-          d.tipo.toLowerCase().includes(q) ||
-          d.endereco.toLowerCase().includes(q) ||
-          (fiscal && fiscal.nome.toLowerCase().includes(q)) ||
-          (fiscal && fiscal.matricula && fiscal.matricula.toLowerCase().includes(q))
-        );
-      })
-    : statusFiltered;
+  const filtered = useMemo(
+    () => (normalizedQuery
+      ? statusFiltered.filter(d => {
+          const fiscal = getFiscalName(d.fiscal_id);
+          return (
+            d.protocolo.toLowerCase().includes(normalizedQuery) ||
+            d.tipo.toLowerCase().includes(normalizedQuery) ||
+            d.endereco.toLowerCase().includes(normalizedQuery) ||
+            (fiscal && fiscal.nome.toLowerCase().includes(normalizedQuery)) ||
+            (fiscal && fiscal.matricula && fiscal.matricula.toLowerCase().includes(normalizedQuery))
+          );
+        })
+      : statusFiltered),
+    [normalizedQuery, statusFiltered]
+  );
 
   // Check if there's an exact protocol match to highlight
-  const exactMatch = searchQuery.trim()
-    ? filtered.find(d => d.protocolo.toLowerCase() === searchQuery.toLowerCase().trim())
-    : null;
+  const exactMatch = useMemo(
+    () => (normalizedQuery ? filtered.find(d => d.protocolo.toLowerCase() === normalizedQuery) || null : null),
+    [normalizedQuery, filtered]
+  );
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="pb-24 lg:pb-8">
@@ -887,6 +920,9 @@ function AllDenunciasView({ onSelect }: { onSelect: (d: Denuncia) => void }) {
                       )}
                     </motion.p>
                   )}
+                  <p className="text-[11px] text-indigo-300 mt-1.5 ml-1">
+                    Mostrando {filtered.length} de {denuncias.length} denúncia(s)
+                  </p>
                 </div>
               </motion.div>
             )}
@@ -1005,7 +1041,7 @@ function AllDenunciasView({ onSelect }: { onSelect: (d: Denuncia) => void }) {
           <div className="px-4 md:px-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 md:gap-3">
             {filtered.map((d, i) => {
               const fiscal = getFiscalName(d.fiscal_id);
-              const isHighlighted = searchQuery && d.protocolo.toLowerCase().includes(searchQuery.toLowerCase().trim());
+              const isHighlighted = !!normalizedQuery && d.protocolo.toLowerCase().includes(normalizedQuery);
 
               return (
                 <motion.button
@@ -1058,7 +1094,16 @@ function AllDenunciasView({ onSelect }: { onSelect: (d: Denuncia) => void }) {
                       )}
 
                       {d.fotos.length > 0 && (
-                        <p className="text-[10px] md:text-xs text-blue-500 flex items-center gap-0.5 mt-1"><Camera size={9} />{d.fotos.length} foto(s)</p>
+                        <div className="mt-1.5">
+                          <p className="text-[10px] md:text-xs text-blue-500 flex items-center gap-0.5"><Camera size={9} />{d.fotos.length} foto(s)</p>
+                          <img
+                            src={d.fotos[0]}
+                            alt={`Foto da denúncia ${d.protocolo}`}
+                            loading="lazy"
+                            decoding="async"
+                            className="mt-1 h-16 w-full max-w-[120px] object-cover rounded-lg border border-blue-100"
+                          />
+                        </div>
                       )}
                     </div>
                     <ChevronRight size={16} className="text-gray-400 shrink-0 mt-1" />
