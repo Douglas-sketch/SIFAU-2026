@@ -9,6 +9,7 @@ import { Lock, ArrowLeft, AlertCircle, ChevronDown, Eye, EyeOff, Mail, Users, Lo
 import { supabase } from './lib/supabase';
 import * as supa from './lib/supabaseService';
 import { getProfilePhoto } from './lib/profilePhoto';
+import { requestEssentialPermissions } from './lib/appPermissions';
 import Logo from './components/Logo';
 
 const THEME_GRADIENTS: Record<AppTheme, string> = {
@@ -200,13 +201,12 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         }
 
         saveAccount(e, p);
-        if (data?.session) {
-          finishAuth(e);
-        } else {
-          setSuccess('Conta criada com sucesso! Se necessário, confirme seu e-mail para entrar.');
-          setMode('login');
-          setPassword('');
-          setConfirmPassword('');
+        finishAuth(e);
+
+        // If Supabase still requires e-mail confirmation, keep a friendly notice
+        // but do not block access to the app.
+        if (!data?.session) {
+          setSuccess('Conta criada com sucesso! Você já pode usar o app agora.');
         }
         return;
       }
@@ -1074,6 +1074,23 @@ function AppContent() {
     localStorage.setItem('sifau_theme', theme);
     applyTheme(theme);
   }, [theme]);
+
+  // Request essential runtime permissions once per authenticated session
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const permissionsKey = 'sifau_permissions_requested_v1';
+    if (sessionStorage.getItem(permissionsKey) === '1') return;
+
+    sessionStorage.setItem(permissionsKey, '1');
+    requestEssentialPermissions()
+      .then((result) => {
+        console.log('🔐 Permissões solicitadas:', result);
+      })
+      .catch(() => {
+        console.warn('⚠️ Não foi possível solicitar permissões essenciais agora.');
+      });
+  }, [isAuthenticated]);
 
   const handleLogoutAuth = async () => {
     if (supabase) {

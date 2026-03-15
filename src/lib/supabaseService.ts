@@ -126,7 +126,12 @@ export async function getAllDenuncias(): Promise<Denuncia[]> {
       .from('denuncias')
       .select('*')
       .order('created_at', { ascending: false });
-    return (data || []).map(mapDenuncia);
+
+    const mapped = (data || []).map(mapDenuncia);
+    if (!mapped.length) return mapped;
+
+    const fotosMap = await getFotosMap(mapped.map(d => d.id));
+    return mapped.map(d => ({ ...d, fotos: fotosMap.get(d.id) || d.fotos || [] }));
   } catch { return []; }
 }
 
@@ -151,8 +156,20 @@ export async function createDenuncia(d: Denuncia): Promise<Denuncia | null> {
     addLog(`📝 Criando denúncia: ${d.protocolo} (email: ${d.auth_email || 'N/A'})`);
     const { data, error } = await supabase!.from('denuncias').insert(insertData).select().single();
     if (error) { addLog(`❌ Erro criar denúncia: ${error.message} | Code: ${error.code}`); return null; }
+
+    if (Array.isArray(d.fotos) && d.fotos.length > 0) {
+      const fotosRows = d.fotos.map((base64, idx) => ({
+        id: `foto-${d.id}-${idx}-${Date.now()}`,
+        denuncia_id: d.id,
+        base64,
+        tipo: 'denuncia',
+      }));
+      const { error: fotosError } = await supabase!.from('fotos').insert(fotosRows);
+      if (fotosError) addLog(`⚠️ Erro ao salvar fotos da denúncia ${d.protocolo}: ${fotosError.message}`);
+    }
+
     addLog(`✅ Denúncia criada no Supabase: ${d.protocolo}`);
-    return data ? mapDenuncia(data) : null;
+    return data ? { ...mapDenuncia(data), fotos: d.fotos || [] } : null;
   } catch (e: any) { addLog(`❌ Exceção criar denúncia: ${e?.message}`); return null; }
 }
 
@@ -311,6 +328,26 @@ export async function createFoto(denunciaId: string, base64: string, tipo: strin
       tipo,
     });
   } catch { /* */ }
+}
+
+async function getFotosMap(denunciaIds: string[]): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  if (!ok() || !denunciaIds.length) return map;
+  try {
+    const { data } = await supabase!
+      .from('fotos')
+      .select('denuncia_id, base64, tipo')
+      .in('denuncia_id', denunciaIds)
+      .eq('tipo', 'denuncia')
+      .order('created_at', { ascending: true });
+
+    (data || []).forEach((row: any) => {
+      const current = map.get(row.denuncia_id) || [];
+      current.push(row.base64);
+      map.set(row.denuncia_id, current);
+    });
+  } catch { /* */ }
+  return map;
 }
 
 // ============================================
