@@ -48,42 +48,49 @@ jobs:
       - name: Sync Android
         run: npx cap sync android
 
-      - name: Patch AndroidManifest permissions and legacy storage
-        run: |
-          node -e "
-          const fs = require('fs');
-          const path = 'android/app/src/main/AndroidManifest.xml';
-          if (!fs.existsSync(path)) {
-            console.log('Manifest não encontrado, pulando patch.');
-            process.exit(0);
-          }
-
-          let manifest = fs.readFileSync(path, 'utf8');
-          const permissions = [
-            'android.permission.CAMERA',
-            'android.permission.ACCESS_COARSE_LOCATION',
-            'android.permission.ACCESS_FINE_LOCATION'
-          ];
-
-          permissions.forEach(perm => {
-            if (!manifest.includes(perm)) {
-              manifest = manifest.replace('<application', '    <uses-permission android:name=\"' + perm + '\" />\n    <application');
-            }
-          });
-
-          if (!manifest.includes('android:requestLegacyExternalStorage')) {
-            manifest = manifest.replace('<application', '<application android:requestLegacyExternalStorage=\"true\"');
-          }
-
-          fs.writeFileSync(path, manifest);
-          console.log('AndroidManifest atualizado com sucesso.');
-          "
-
-      - name: Fix Android build config
+      - name: Fix Android Config, Permissions and Kotlin Duplicates
         run: |
           node -e "
           const fs = require('fs');
           
+          // 1. Injetar Permissões no AndroidManifest.xml
+          const manifestPath = 'android/app/src/main/AndroidManifest.xml';
+          if (fs.existsSync(manifestPath)) {
+            let manifest = fs.readFileSync(manifestPath, 'utf8');
+            const permissions = [
+              '<uses-permission android:name=\"android.permission.CAMERA\" />',
+              '<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" />',
+              '<uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\" />'
+            ];
+            permissions.forEach(p => {
+              if (!manifest.includes(p)) {
+                manifest = manifest.replace('<application', p + '\n    <application');
+              }
+            });
+            if (!manifest.includes('android:requestLegacyExternalStorage')) {
+              manifest = manifest.replace('<application', '<application android:requestLegacyExternalStorage=\"true\"');
+            }
+            fs.writeFileSync(manifestPath, manifest);
+          }
+
+          // 2. CORREÇÃO CRÍTICA: Resolver Duplicate Class do Kotlin no build.gradle raiz
+          const rootGradlePath = 'android/build.gradle';
+          if (fs.existsSync(rootGradlePath)) {
+            let rootGradle = fs.readFileSync(rootGradlePath, 'utf8');
+            
+            // Atualiza AGP para 8.9.1
+            rootGradle = rootGradle.replace(/com\.android\.tools\.build:gradle:[^'\\\"]+/g, 'com.android.tools.build:gradle:8.9.1');
+            
+            // Adiciona a resolução de conflitos para TODOS os subprojetos
+            const conflictResolution = '\nallprojects {\n    configurations.all {\n        resolutionStrategy.eachDependency { details ->\n            if (details.requested.group == \"org.jetbrains.kotlin\" && (details.requested.name == \"kotlin-stdlib-jdk7\" || details.requested.name == \"kotlin-stdlib-jdk8\")) {\n                details.useTarget \"org.jetbrains.kotlin:kotlin-stdlib:\" + details.requested.version\n            }\n        }\n    }\n}\n';
+            
+            if (!rootGradle.includes('resolutionStrategy')) {
+              rootGradle += conflictResolution;
+            }
+            fs.writeFileSync(rootGradlePath, rootGradle);
+          }
+
+          // 3. Fix variables.gradle (SDK 36)
           const varsPath = 'android/variables.gradle';
           if (fs.existsSync(varsPath)) {
             let vars = fs.readFileSync(varsPath, 'utf8');
@@ -92,13 +99,7 @@ jobs:
             fs.writeFileSync(varsPath, vars);
           }
 
-          const rootGradle = 'android/build.gradle';
-          if (fs.existsSync(rootGradle)) {
-            let root = fs.readFileSync(rootGradle, 'utf8');
-            root = root.replace(/com\.android\.tools\.build:gradle:[^'\\\"]+/g, 'com.android.tools.build:gradle:8.9.1');
-            fs.writeFileSync(rootGradle, root);
-          }
-
+          // 4. Fix Gradle Wrapper
           const wrapperPath = 'android/gradle/wrapper/gradle-wrapper.properties';
           if (fs.existsSync(wrapperPath)) {
             let wrapper = fs.readFileSync(wrapperPath, 'utf8');
