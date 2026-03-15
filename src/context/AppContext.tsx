@@ -105,6 +105,15 @@ function resetAllStatusesToOffline(profiles: Profile[]): Profile[] {
   return profiles.map(p => ({ ...p, status_online: 'offline' as const }));
 }
 
+function getPointsByFiscal(historico: HistoricoAtividade[]): Map<string, number> {
+  const map = new Map<string, number>();
+  historico.forEach(h => {
+    const current = map.get(h.fiscal_id) || 0;
+    map.set(h.fiscal_id, current + (h.pontos || 0));
+  });
+  return map;
+}
+
 function loadFromStorage(email?: string) {
   const key = getStorageKey(email);
   try {
@@ -255,6 +264,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     saveToStorage({ profiles, denuncias, relatorios, autos, historico, mensagens }, authEmail);
   }, [profiles, denuncias, relatorios, autos, historico, mensagens, authEmail]);
+
+  // ═══ RECALCULAR PONTOS DOS FISCAIS (SOMA TOTAL DO HISTÓRICO) ═══
+  useEffect(() => {
+    const pointsMap = getPointsByFiscal(historico);
+
+    setProfiles(prev => {
+      let changed = false;
+      const next = prev.map(p => {
+        if (p.tipo !== 'fiscal') return p;
+        const total = pointsMap.get(p.id) || 0;
+        if (p.pontos_total === total) return p;
+        changed = true;
+        return { ...p, pontos_total: total };
+      });
+
+      if (changed && isOnline) {
+        next.filter(p => p.tipo === 'fiscal').forEach(p => {
+          supa.updateProfilePontos(p.id, p.pontos_total);
+        });
+      }
+
+      return changed ? next : prev;
+    });
+  }, [historico, isOnline]);
 
   // ═══ REALTIME SUBSCRIPTIONS ═══
   useEffect(() => {
