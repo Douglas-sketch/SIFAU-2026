@@ -200,13 +200,12 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         }
 
         saveAccount(e, p);
-        if (data?.session) {
-          finishAuth(e);
-        } else {
-          setSuccess('Conta criada com sucesso! Se necessário, confirme seu e-mail para entrar.');
-          setMode('login');
-          setPassword('');
-          setConfirmPassword('');
+        finishAuth(e);
+
+        // If Supabase still requires e-mail confirmation, keep a friendly notice
+        // but do not block access to the app.
+        if (!data?.session) {
+          setSuccess('Conta criada com sucesso! Você já pode usar o app agora.');
         }
         return;
       }
