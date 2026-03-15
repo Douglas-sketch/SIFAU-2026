@@ -126,6 +126,7 @@ CREATE TABLE user_accounts (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   email TEXT UNIQUE NOT NULL,
   provider TEXT DEFAULT 'email',
+  senha TEXT,
   primeiro_acesso TIMESTAMPTZ DEFAULT now(),
   ultimo_acesso TIMESTAMPTZ DEFAULT now(),
   total_acessos INTEGER DEFAULT 1,
