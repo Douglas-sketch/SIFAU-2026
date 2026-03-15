@@ -8,7 +8,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # Força o ambiente a usar Node 24 para todas as ações javascript
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
@@ -17,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '24' # Atualizado de 20 para 24
+          node-version: '24'
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -31,17 +30,20 @@ jobs:
       - name: Remove singleFile plugin
         run: |
           node -e "
-          let c = require('fs').readFileSync('vite.config.ts','utf8');
-          c = c.replace(/import.*vite-plugin-singlefile.*/g, '');
-          c = c.replace(/viteSingleFile\(\)\s*,?/g, '');
-          require('fs').writeFileSync('vite.config.ts', c);
+          const fs = require('fs');
+          if (fs.existsSync('vite.config.ts')) {
+            let c = fs.readFileSync('vite.config.ts','utf8');
+            c = c.replace(/import.*vite-plugin-singlefile.*/g, '');
+            c = c.replace(/viteSingleFile\(\)\s*,?/g, '');
+            fs.writeFileSync('vite.config.ts', c);
+          }
           "
 
       - name: Build web
         run: npm run build
 
       - name: Add Android platform
-        run: npx cap add android
+        run: npx cap add android || true
 
       - name: Sync Android
         run: npx cap sync android
@@ -100,55 +102,59 @@ jobs:
         run: |
           node -e "
           const fs = require('fs');
-          const path = require('path');
+          
+          // 1. Injetar Permissões no AndroidManifest.xml
+          const manifestPath = 'android/app/src/main/AndroidManifest.xml';
+          if (fs.existsSync(manifestPath)) {
+            let manifest = fs.readFileSync(manifestPath, 'utf8');
+            const permissions = [
+              '<uses-permission android:name=\"android.permission.CAMERA\" />',
+              '<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" />',
+              '<uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\" />'
+            ];
+            permissions.forEach(p => {
+              if (!manifest.includes(p)) {
+                manifest = manifest.replace('<application', p + '\n    <application');
+              }
+            });
+            if (!manifest.includes('android:requestLegacyExternalStorage')) {
+              manifest = manifest.replace('<application', '<application android:requestLegacyExternalStorage=\"true\"');
+            }
+            fs.writeFileSync(manifestPath, manifest);
+          }
 
-          // Fix variables.gradle
+          // 2. CORREÇÃO CRÍTICA: Resolver Duplicate Class do Kotlin no build.gradle raiz
+          const rootGradlePath = 'android/build.gradle';
+          if (fs.existsSync(rootGradlePath)) {
+            let rootGradle = fs.readFileSync(rootGradlePath, 'utf8');
+            
+            // Atualiza AGP para 8.9.1
+            rootGradle = rootGradle.replace(/com\.android\.tools\.build:gradle:[^'\\\"]+/g, 'com.android.tools.build:gradle:8.9.1');
+            
+            // Adiciona a resolução de conflitos para TODOS os subprojetos
+            const conflictResolution = '\nallprojects {\n    configurations.all {\n        resolutionStrategy.eachDependency { details ->\n            if (details.requested.group == \"org.jetbrains.kotlin\" && (details.requested.name == \"kotlin-stdlib-jdk7\" || details.requested.name == \"kotlin-stdlib-jdk8\")) {\n                details.useTarget \"org.jetbrains.kotlin:kotlin-stdlib:\" + details.requested.version\n            }\n        }\n    }\n}\n';
+            
+            if (!rootGradle.includes('resolutionStrategy')) {
+              rootGradle += conflictResolution;
+            }
+            fs.writeFileSync(rootGradlePath, rootGradle);
+          }
+
+          // 3. Fix variables.gradle (SDK 36)
           const varsPath = 'android/variables.gradle';
           if (fs.existsSync(varsPath)) {
             let vars = fs.readFileSync(varsPath, 'utf8');
             vars = vars.replace(/compileSdkVersion\s*=\s*\d+/, 'compileSdkVersion = 36');
             vars = vars.replace(/targetSdkVersion\s*=\s*\d+/, 'targetSdkVersion = 36');
             fs.writeFileSync(varsPath, vars);
-            console.log('variables.gradle updated to SDK 36');
           }
 
-          // Fix root build.gradle - update AGP
-          const rootGradle = 'android/build.gradle';
-          if (fs.existsSync(rootGradle)) {
-            let root = fs.readFileSync(rootGradle, 'utf8');
-            root = root.replace(/com\.android\.tools\.build:gradle:[^'\\\"]+/g, 'com.android.tools.build:gradle:8.9.1');
-            fs.writeFileSync(rootGradle, root);
-            console.log('Root build.gradle AGP updated to 8.9.1');
-          }
-
-          // Fix app/build.gradle
-          const appGradle = 'android/app/build.gradle';
-          if (fs.existsSync(appGradle)) {
-            let app = fs.readFileSync(appGradle, 'utf8');
-
-            // Force compileSdk and targetSdk to 36
-            app = app.replace(/compileSdk\w*\s+\d+/g, 'compileSdkVersion 36');
-            app = app.replace(/targetSdk\w*\s+\d+/g, 'targetSdkVersion 36');
-
-            // Add Kotlin exclusions if not present
-            if (!app.includes('exclude group')) {
-              app = app.replace(
-                /dependencies\s*\{/,
-                'dependencies {\n        configurations.all {\n            exclude group: \'org.jetbrains.kotlin\', module: \'kotlin-stdlib-jdk7\'\n            exclude group: \'org.jetbrains.kotlin\', module: \'kotlin-stdlib-jdk8\'\n        }\n        '
-              );
-            }
-
-            // Fix gradle-wrapper.properties to use Gradle 8.12
-            const wrapperPath = 'android/gradle/wrapper/gradle-wrapper.properties';
-            if (fs.existsSync(wrapperPath)) {
-              let wrapper = fs.readFileSync(wrapperPath, 'utf8');
-              wrapper = wrapper.replace(/gradle-[0-9.]+-all\.zip/, 'gradle-8.12-all.zip');
-              fs.writeFileSync(wrapperPath, wrapper);
-              console.log('Gradle wrapper updated to 8.12');
-            }
-
-            fs.writeFileSync(appGradle, app);
-            console.log('app/build.gradle updated');
+          // 4. Fix Gradle Wrapper
+          const wrapperPath = 'android/gradle/wrapper/gradle-wrapper.properties';
+          if (fs.existsSync(wrapperPath)) {
+            let wrapper = fs.readFileSync(wrapperPath, 'utf8');
+            wrapper = wrapper.replace(/gradle-[0-9.]+-all\.zip/, 'gradle-8.12-all.zip');
+            fs.writeFileSync(wrapperPath, wrapper);
           }
           "
 
@@ -164,7 +170,7 @@ jobs:
           cd ..
 
       - name: Upload APK
-        uses: actions/upload-artifact@v6 # Atualizado de v5 para v6
+        uses: actions/upload-artifact@v6
         with:
           name: SIFAU-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
