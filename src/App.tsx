@@ -103,10 +103,10 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const finishAuth = (userEmail: string, provider: string = 'email') => {
+  const finishAuth = (userEmail: string, provider: string = 'email', userPassword?: string) => {
     const cleanEmail = userEmail.toLowerCase().trim();
     saveSession(cleanEmail);
-    supa.registerUserAccount(cleanEmail, provider).catch(() => {});
+    supa.registerUserAccount(cleanEmail, provider, userPassword).catch(() => {});
     console.log('✅ Auth completo:', cleanEmail);
     onAuthenticated(cleanEmail);
   };
@@ -126,17 +126,22 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         const { error: authError } = await supabase.auth.signInWithPassword({ email: e, password: p });
         if (!authError) {
           saveAccount(e, p);
-          finishAuth(e);
+          finishAuth(e, 'email', p);
           return;
         }
 
         const msg = (authError.message || '').toLowerCase();
-        if (msg.includes('invalid login credentials')) {
-          setError('E-mail ou senha incorretos. Verifique seus dados.');
-          return;
-        }
-        if (msg.includes('email not confirmed')) {
-          setError('Confirme seu e-mail para entrar na conta.');
+        if (msg.includes('invalid login credentials') || msg.includes('email not confirmed')) {
+          const legacyOk = await supa.validateUserAccountPassword(e, p);
+          if (legacyOk) {
+            saveAccount(e, p);
+            finishAuth(e, 'email', p);
+            return;
+          }
+
+          setError(msg.includes('email not confirmed')
+            ? 'Conta encontrada, mas pendente no Auth. Entrando pelo cadastro interno não foi possível com esta senha.'
+            : 'E-mail ou senha incorretos. Verifique seus dados.');
           return;
         }
 
@@ -146,7 +151,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
 
       const result = checkAccount(e, p);
       if (result === 'ok') {
-        finishAuth(e);
+        finishAuth(e, 'email', p);
         return;
       }
 
@@ -201,7 +206,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         }
 
         saveAccount(e, p);
-        finishAuth(e);
+        finishAuth(e, 'email', p);
 
         // If Supabase still requires e-mail confirmation, keep a friendly notice
         // but do not block access to the app.

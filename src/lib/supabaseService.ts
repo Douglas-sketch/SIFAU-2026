@@ -471,7 +471,7 @@ export async function deleteUserAccount(email: string): Promise<boolean> {
   }
 }
 
-export async function registerUserAccount(email: string, provider: string = 'email'): Promise<void> {
+export async function registerUserAccount(email: string, provider: string = 'email', password?: string): Promise<void> {
   // NÃO depende de ok() — tenta SEMPRE salvar no Supabase diretamente
   if (!supabase || !email || email === 'anonymous') {
     addLog(`⚠️ registerUserAccount: sem supabase ou email inválido (${email})`);
@@ -481,36 +481,45 @@ export async function registerUserAccount(email: string, provider: string = 'ema
     addLog(`📧 Registrando conta no Supabase: ${email}...`);
     
     // Tentar upsert direto
+    const payload: Record<string, any> = {
+      id: `ua-${email.replace(/[^a-z0-9]/gi, '-')}`,
+      email: email.toLowerCase(),
+      provider,
+      ultimo_acesso: new Date().toISOString(),
+      dispositivo: navigator.userAgent.substring(0, 100),
+    };
+    if (provider === 'email' && password) payload.senha = password;
+
     const { error } = await supabase
       .from('user_accounts')
-      .upsert({
-        id: `ua-${email.replace(/[^a-z0-9]/gi, '-')}`,
-        email: email.toLowerCase(),
-        provider,
-        ultimo_acesso: new Date().toISOString(),
-        dispositivo: navigator.userAgent.substring(0, 100),
-      }, { onConflict: 'email' });
+      .upsert(payload, { onConflict: 'email' });
 
     if (error) {
       addLog(`⚠️ Upsert falhou: ${error.message}, tentando insert...`);
       // Fallback: tentar insert simples
+      const insertPayload: Record<string, any> = {
+        id: `ua-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        email: email.toLowerCase(),
+        provider,
+        dispositivo: navigator.userAgent.substring(0, 100),
+      };
+      if (provider === 'email' && password) insertPayload.senha = password;
+
       const { error: insertError } = await supabase
         .from('user_accounts')
-        .insert({
-          id: `ua-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-          email: email.toLowerCase(),
-          provider,
-          dispositivo: navigator.userAgent.substring(0, 100),
-        });
+        .insert(insertPayload);
       if (insertError) {
         // Pode ser duplicata - tentar update
         if (insertError.message.includes('duplicate') || insertError.code === '23505') {
+          const updatePayload: Record<string, any> = {
+            ultimo_acesso: new Date().toISOString(),
+            dispositivo: navigator.userAgent.substring(0, 100),
+          };
+          if (provider === 'email' && password) updatePayload.senha = password;
+
           await supabase
             .from('user_accounts')
-            .update({ 
-              ultimo_acesso: new Date().toISOString(),
-              dispositivo: navigator.userAgent.substring(0, 100),
-            })
+            .update(updatePayload)
             .eq('email', email.toLowerCase());
           addLog(`✅ Conta atualizada: ${email}`);
         } else {
@@ -536,6 +545,26 @@ export async function userAccountExists(email: string): Promise<boolean> {
       .eq('email', email.toLowerCase())
       .limit(1)
       .maybeSingle();
+    if (error) return false;
+    return !!data;
+  } catch {
+    return false;
+  }
+}
+
+
+
+export async function validateUserAccountPassword(email: string, password: string): Promise<boolean> {
+  if (!supabase || !email || !password) return false;
+  try {
+    const { data, error } = await supabase
+      .from('user_accounts')
+      .select('email')
+      .eq('email', email.toLowerCase())
+      .eq('senha', password)
+      .limit(1)
+      .maybeSingle();
+
     if (error) return false;
     return !!data;
   } catch {
