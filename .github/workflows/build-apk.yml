@@ -48,7 +48,7 @@ jobs:
 
       - name: Patch AndroidManifest permissions and legacy storage
         run: |
-          node -e "
+          node <<'NODE'
           const fs = require('fs');
           const manifestPath = 'android/app/src/main/AndroidManifest.xml';
           if (!fs.existsSync(manifestPath)) {
@@ -64,10 +64,11 @@ jobs:
           ];
 
           for (const perm of permissions) {
-            if (!manifest.includes(`android:name=\"${perm}\"`)) {
+            if (!manifest.includes(`android:name="${perm}"`)) {
               manifest = manifest.replace(
                 /<manifest[^>]*>/,
-                (m) => `${m}\n    <uses-permission android:name=\"${perm}\" />`
+                (m) => `${m}
+    <uses-permission android:name="${perm}" />`
               );
             }
           }
@@ -75,26 +76,26 @@ jobs:
           // Ensure requestLegacyExternalStorage is enabled in application tag
           manifest = manifest.replace(/<application([^>]*)>/, (full, attrs) => {
             if (attrs.includes('android:requestLegacyExternalStorage')) {
-              return `<application${attrs.replace(/android:requestLegacyExternalStorage=\"[^\"]*\"/, 'android:requestLegacyExternalStorage=\"true\"')}>`;
+              return `<application${attrs.replace(/android:requestLegacyExternalStorage="[^"]*"/, 'android:requestLegacyExternalStorage="true"')}>`;
             }
-            return `<application${attrs} android:requestLegacyExternalStorage=\"true\">`;
+            return `<application${attrs} android:requestLegacyExternalStorage="true">`;
           });
 
           fs.writeFileSync(manifestPath, manifest);
 
           const verification = fs.readFileSync(manifestPath, 'utf8');
-          if (!verification.includes('android:requestLegacyExternalStorage=\"true\"')) {
-            throw new Error('android:requestLegacyExternalStorage=\"true\" não encontrado na tag <application>.');
+          if (!verification.includes('android:requestLegacyExternalStorage="true"')) {
+            throw new Error('android:requestLegacyExternalStorage="true" não encontrado na tag <application>.');
           }
 
           for (const perm of permissions) {
-            if (!verification.includes(`android:name=\"${perm}\"`)) {
+            if (!verification.includes(`android:name="${perm}"`)) {
               throw new Error('Permissão ausente no AndroidManifest: ' + perm);
             }
           }
 
           console.log('AndroidManifest atualizado e validado com sucesso.');
-          "
+          NODE
 
       - name: Fix Android build config
         run: |
