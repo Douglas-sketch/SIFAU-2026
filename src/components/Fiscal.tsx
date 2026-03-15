@@ -1034,6 +1034,7 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
 
   const limites = TIPO_MULTA_VALORES[denuncia.tipo] || { min: 100, max: 5000 };
   const [valorMulta, setValorMulta] = useState(existingAuto?.valor || limites.min);
+  const [valorManual, setValorManual] = useState<string>((existingAuto?.valor || limites.min).toFixed(2));
   const [embargo, setEmbargo] = useState(existingAuto?.embargo ?? false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1125,14 +1126,32 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
   };
 
   const handleSaveMulta = () => {
+    const manualNormalizado = valorManual.replace(',', '.').trim();
+    const valorDigitado = Number(manualNormalizado);
+
+    if (!Number.isFinite(valorDigitado)) {
+      addNotification('Digite um valor válido para a multa.', 'warning');
+      return;
+    }
+
+    if (valorDigitado < limites.min || valorDigitado > limites.max) {
+      addNotification(
+        `Valor fora da faixa permitida (${limites.min.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} até ${limites.max.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}).`,
+        'warning'
+      );
+      return;
+    }
+
+    const valorFinal = Math.round(valorDigitado * 100) / 100;
+    setValorMulta(valorFinal);
     addAuto({
       denuncia_id: denuncia.id,
       fiscal_id: currentUser?.id || '',
-      valor: valorMulta,
+      valor: valorFinal,
       tipo: denuncia.tipo,
       embargo,
     });
-    addNotification(`Multa de R$ ${valorMulta.toLocaleString('pt-BR')} registrada!`, 'success');
+    addNotification(`Multa de R$ ${valorFinal.toLocaleString('pt-BR')} registrada!`, 'success');
     setView('main');
   };
 
@@ -1346,13 +1365,19 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
                 <label className="text-sm md:text-base font-medium text-gray-700 mb-2 block">Valor da Multa (R$)</label>
                 <input
                   type="number"
-                  value={valorMulta}
+                  value={valorManual}
                   step="0.01"
-                  onChange={e => {
-                    let v = Number(e.target.value);
-                    if (v < limites.min) v = limites.min;
-                    if (v > limites.max) v = limites.max;
-                    setValorMulta(Math.round(v * 100) / 100);
+                  onChange={e => setValorManual(e.target.value)}
+                  onBlur={() => {
+                    const n = Number(valorManual.replace(',', '.'));
+                    if (!Number.isFinite(n)) {
+                      setValorManual(valorMulta.toFixed(2));
+                      return;
+                    }
+                    const ajustado = Math.max(limites.min, Math.min(limites.max, n));
+                    const round = Math.round(ajustado * 100) / 100;
+                    setValorMulta(round);
+                    setValorManual(round.toFixed(2));
                   }}
                   min={limites.min}
                   max={limites.max}
@@ -1364,9 +1389,37 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
                   max={limites.max}
                   step="0.01"
                   value={valorMulta}
-                  onChange={e => setValorMulta(Math.round(Number(e.target.value) * 100) / 100)}
+                  onChange={e => {
+                    const novo = Math.round(Number(e.target.value) * 100) / 100;
+                    setValorMulta(novo);
+                    setValorManual(novo.toFixed(2));
+                  }}
                   className="w-full mt-2 accent-red-600"
                 />
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={() => { setValorMulta(limites.min); setValorManual(limites.min.toFixed(2)); }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-100 text-red-700"
+                  >
+                    Mínimo
+                  </button>
+                  <button
+                    onClick={() => {
+                      const medio = Math.round((((limites.min + limites.max) / 2) * 100)) / 100;
+                      setValorMulta(medio);
+                      setValorManual(medio.toFixed(2));
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-100 text-blue-700"
+                  >
+                    Médio
+                  </button>
+                  <button
+                    onClick={() => { setValorMulta(limites.max); setValorManual(limites.max.toFixed(2)); }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-green-100 text-green-700"
+                  >
+                    Máximo
+                  </button>
+                </div>
               </div>
 
               {/* +10 pontos pela multa */}
