@@ -270,7 +270,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (msgChannel) channelsRef.current.push(msgChannel);
 
     const denChannel = supa.subscribeToDenuncias((updated) => {
-      setDenuncias(prev => prev.map(d => d.id === updated.id ? { ...d, ...updated } : d));
+      setDenuncias(prev => {
+        const idx = prev.findIndex(d => d.id === updated.id);
+        if (idx === -1) return [updated, ...prev];
+        return prev.map(d => d.id === updated.id ? { ...d, ...updated } : d);
+      });
+
+      // Ensure manager/fiscal instantly see citizen photos that are stored in `fotos` table.
+      supa.getFotosByDenuncia(updated.id).then((fotos) => {
+        if (!fotos.length) return;
+        setDenuncias(prev => prev.map(d => d.id === updated.id ? { ...d, fotos } : d));
+      }).catch(() => {});
     });
     if (denChannel) channelsRef.current.push(denChannel);
 
