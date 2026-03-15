@@ -8,6 +8,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
+      # Força o ambiente a usar Node 24 para todas as ações javascript
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
@@ -16,7 +17,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '24' # Atualizado de 20 para 24
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -55,8 +56,8 @@ jobs:
           const varsPath = 'android/variables.gradle';
           if (fs.existsSync(varsPath)) {
             let vars = fs.readFileSync(varsPath, 'utf8');
-            vars = vars.replace(/compileSdkVersion\\s*=\\s*\\d+/, 'compileSdkVersion = 36');
-            vars = vars.replace(/targetSdkVersion\\s*=\\s*\\d+/, 'targetSdkVersion = 36');
+            vars = vars.replace(/compileSdkVersion\s*=\s*\d+/, 'compileSdkVersion = 36');
+            vars = vars.replace(/targetSdkVersion\s*=\s*\d+/, 'targetSdkVersion = 36');
             fs.writeFileSync(varsPath, vars);
             console.log('variables.gradle updated to SDK 36');
           }
@@ -65,7 +66,7 @@ jobs:
           const rootGradle = 'android/build.gradle';
           if (fs.existsSync(rootGradle)) {
             let root = fs.readFileSync(rootGradle, 'utf8');
-            root = root.replace(/com\\.android\\.tools\\.build:gradle:[^'\\\"]+/g, 'com.android.tools.build:gradle:8.9.1');
+            root = root.replace(/com\.android\.tools\.build:gradle:[^'\\\"]+/g, 'com.android.tools.build:gradle:8.9.1');
             fs.writeFileSync(rootGradle, root);
             console.log('Root build.gradle AGP updated to 8.9.1');
           }
@@ -76,14 +77,14 @@ jobs:
             let app = fs.readFileSync(appGradle, 'utf8');
 
             // Force compileSdk and targetSdk to 36
-            app = app.replace(/compileSdk\\w*\\s+\\d+/g, 'compileSdkVersion 36');
-            app = app.replace(/targetSdk\\w*\\s+\\d+/g, 'targetSdkVersion 36');
+            app = app.replace(/compileSdk\w*\s+\d+/g, 'compileSdkVersion 36');
+            app = app.replace(/targetSdk\w*\s+\d+/g, 'targetSdkVersion 36');
 
             // Add Kotlin exclusions if not present
             if (!app.includes('exclude group')) {
               app = app.replace(
-                /dependencies\\s*\\{/,
-                'dependencies {\\n        configurations.all {\\n            exclude group: \\'org.jetbrains.kotlin\\', module: \\'kotlin-stdlib-jdk7\\'\\n            exclude group: \\'org.jetbrains.kotlin\\', module: \\'kotlin-stdlib-jdk8\\'\\n        }\\n        '
+                /dependencies\s*\{/,
+                'dependencies {\n        configurations.all {\n            exclude group: \'org.jetbrains.kotlin\', module: \'kotlin-stdlib-jdk7\'\n            exclude group: \'org.jetbrains.kotlin\', module: \'kotlin-stdlib-jdk8\'\n        }\n        '
               );
             }
 
@@ -91,7 +92,7 @@ jobs:
             const wrapperPath = 'android/gradle/wrapper/gradle-wrapper.properties';
             if (fs.existsSync(wrapperPath)) {
               let wrapper = fs.readFileSync(wrapperPath, 'utf8');
-              wrapper = wrapper.replace(/gradle-[0-9.]+-all\\.zip/, 'gradle-8.12-all.zip');
+              wrapper = wrapper.replace(/gradle-[0-9.]+-all\.zip/, 'gradle-8.12-all.zip');
               fs.writeFileSync(wrapperPath, wrapper);
               console.log('Gradle wrapper updated to 8.12');
             }
@@ -113,7 +114,7 @@ jobs:
           cd ..
 
       - name: Upload APK
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6 # Atualizado de v5 para v6
         with:
           name: SIFAU-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
