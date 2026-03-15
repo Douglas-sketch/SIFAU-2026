@@ -67,6 +67,7 @@ jobs:
             if (!manifest.includes(`android:name="${perm}"`)) {
               manifest = manifest.replace(
                 /<manifest[^>]*>/,
+                (m) => m + '\n    <uses-permission android:name="' + perm + '" />'
                 (m) => `${m}
     <uses-permission android:name="${perm}" />`
               );
