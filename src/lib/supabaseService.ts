@@ -116,6 +116,37 @@ export async function updateProfilePontos(userId: string, pontos: number): Promi
   } catch { /* */ }
 }
 
+
+export async function getProfileById(profileId: string): Promise<Profile | null> {
+  if (!ok()) return null;
+  try {
+    const { data } = await supabase!
+      .from('profiles')
+      .select('*')
+      .eq('id', profileId)
+      .maybeSingle();
+    return data ? mapProfile(data) : null;
+  } catch { return null; }
+}
+
+export async function upsertProfile(profile: Profile): Promise<void> {
+  if (!ok()) return;
+  try {
+    await supabase!.from('profiles').upsert({
+      id: profile.id,
+      nome: profile.nome,
+      tipo: profile.tipo,
+      matricula: profile.matricula,
+      senha: profile.senha,
+      status: profile.status_online,
+      pontos: profile.pontos_total,
+      latitude: profile.lat || null,
+      longitude: profile.lng || null,
+      updated_at: new Date().toISOString(),
+    });
+  } catch { /* */ }
+}
+
 // ============================================
 // DENÚNCIAS
 // ============================================
@@ -545,26 +576,6 @@ export async function userAccountExists(email: string): Promise<boolean> {
       .eq('email', email.toLowerCase())
       .limit(1)
       .maybeSingle();
-    if (error) return false;
-    return !!data;
-  } catch {
-    return false;
-  }
-}
-
-
-
-export async function validateUserAccountPassword(email: string, password: string): Promise<boolean> {
-  if (!supabase || !email || !password) return false;
-  try {
-    const { data, error } = await supabase
-      .from('user_accounts')
-      .select('email')
-      .eq('email', email.toLowerCase())
-      .eq('senha', password)
-      .limit(1)
-      .maybeSingle();
-
     if (error) return false;
     return !!data;
   } catch {

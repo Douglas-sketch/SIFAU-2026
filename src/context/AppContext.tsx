@@ -21,6 +21,7 @@ interface AppState {
   notifications: Notification[];
   isOnline: boolean;
   login: (matricula: string, senha: string) => Promise<Profile | null>;
+  registerFiscalAutomatico: (email: string, senha: string, nome?: string) => Promise<{ matricula: string; profile: Profile } | null>;
   logout: () => void;
   addDenuncia: (d: Omit<Denuncia, 'id' | 'protocolo' | 'created_at' | 'updated_at'>) => Denuncia;
   updateDenunciaStatus: (id: string, status: DenunciaStatus, extra?: Partial<Denuncia>) => void;
@@ -404,6 +405,62 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const dismissNotification = useCallback((id: string) => {
     setNotifications(prev => prev.filter(x => x.id !== id));
   }, []);
+
+
+
+  const registerFiscalAutomatico = useCallback(async (email: string, senha: string, nome?: string): Promise<{ matricula: string; profile: Profile } | null> => {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanSenha = senha.trim();
+    const baseNome = (nome || cleanEmail.split('@')[0] || 'Fiscal').trim();
+    if (!cleanEmail || !cleanSenha) return null;
+
+    const profileId = `fsc-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+
+    let existing: Profile | null = null;
+    if (isOnline) {
+      existing = await supa.getProfileById(profileId);
+    }
+
+    if (!existing) {
+      existing = profiles.find(p => p.id === profileId) || null;
+    }
+
+    const all = isOnline ? await supa.getAllProfiles() : profiles;
+    const source = all.length ? all : profiles;
+    const maxFsc = source.reduce((acc, p) => {
+      const m = (p.matricula || '').toUpperCase().match(/^FSC-(\d+)$/);
+      if (!m) return acc;
+      return Math.max(acc, Number(m[1]));
+    }, 0);
+
+    const matricula = existing?.matricula || `FSC-${String(maxFsc + 1).padStart(3, '0')}`;
+
+    const profile: Profile = {
+      id: profileId,
+      nome: baseNome,
+      tipo: 'fiscal',
+      matricula,
+      senha: cleanSenha,
+      status_online: 'offline',
+      pontos_total: existing?.pontos_total || 0,
+      lat: existing?.lat,
+      lng: existing?.lng,
+    };
+
+    setProfiles(prev => {
+      const idx = prev.findIndex(p => p.id === profile.id);
+      if (idx >= 0) return prev.map(p => p.id === profile.id ? { ...p, ...profile } : p);
+      return [...prev, profile];
+    });
+
+    if (isOnline) {
+      await supa.upsertProfile(profile);
+      await supa.registerUserAccount(cleanEmail, 'email');
+    }
+
+    addNotification(`Fiscal criado com matrícula ${matricula}.`, 'success');
+    return { matricula, profile };
+  }, [isOnline, profiles, addNotification]);
 
   // ═══ LOGIN ═══
   const login = useCallback(async (matricula: string, senha: string): Promise<Profile | null> => {
@@ -874,7 +931,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   return (
     <AppContext.Provider value={{
       profiles, denuncias, relatorios, autos, historico, mensagens, currentUser, notifications, isOnline,
-      login, logout, addDenuncia, updateDenunciaStatus, designarDenuncia,
+      login, registerFiscalAutomatico, logout, addDenuncia, updateDenunciaStatus, designarDenuncia,
       upsertRelatorio: upsertRelatorioFn, addAuto, aprovarRelatorio, rejeitarRelatorio, getRelatorio, getAuto,
       addNotification, dismissNotification, getFiscalPontos,
       sendMensagem, marcarLida, getConversas, getMensagensConversa,
