@@ -21,6 +21,7 @@ interface AppState {
   notifications: Notification[];
   isOnline: boolean;
   login: (matricula: string, senha: string) => Promise<Profile | null>;
+  registerFiscalAutomatico: (email: string, senha: string, nome?: string) => Promise<{ matricula: string; profile: Profile } | null>;
   logout: () => void;
   addDenuncia: (d: Omit<Denuncia, 'id' | 'protocolo' | 'created_at' | 'updated_at'>) => Denuncia;
   updateDenunciaStatus: (id: string, status: DenunciaStatus, extra?: Partial<Denuncia>) => void;
@@ -40,6 +41,7 @@ interface AppState {
   getMensagensConversa: (userId: string, peerId: string) => Mensagem[];
   authEmail: string;
   setAuthEmail: (email: string) => void;
+  editMinhaDenuncia: (id: string, updates: { tipo?: Denuncia['tipo']; endereco?: string; descricao?: string; denunciante_nome?: string }) => boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -214,9 +216,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (ok) {
         console.log('🟢 Supabase ONLINE — sincronizando dados...');
         try {
-          const [profs, dens] = await Promise.all([
+          const [profs, dens, hists] = await Promise.all([
             supa.getAllProfiles(),
             supa.getAllDenuncias(),
+            supa.getAllHistorico(),
           ]);
 
           if (!cancelled && profs.length) {
@@ -233,6 +236,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           if (!cancelled && dens.length) {
             setDenuncias(dens);
+          }
+          if (!cancelled && hists.length) {
+            setHistorico(hists);
           }
         } catch (e) {
           console.warn('⚠️ Erro ao sincronizar:', e);
@@ -273,12 +279,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     syncIntervalRef.current = setInterval(async () => {
       if (!currentUserRef.current) return;
       try {
-        const [freshMsgs, freshDens, freshProfs, freshRels, freshAutos] = await Promise.all([
+        const [freshMsgs, freshDens, freshProfs, freshRels, freshAutos, freshHists] = await Promise.all([
           supa.getMensagens(currentUserRef.current.id),
           supa.getAllDenuncias(),
           supa.getAllProfiles(),
           supa.getAllRelatorios(),
           supa.getAllAutos(),
+          supa.getAllHistorico(),
         ]);
         if (freshMsgs.length) setMensagens(freshMsgs);
         if (freshDens.length) setDenuncias(freshDens);
@@ -296,6 +303,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           });
           return merged;
         });
+        if (freshHists.length) setHistorico(freshHists);
         if (freshAutos.length) setAutos(prev => {
           const merged = [...prev];
           freshAutos.forEach(fa => {
@@ -354,6 +362,62 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const dismissNotification = useCallback((id: string) => {
     setNotifications(prev => prev.filter(x => x.id !== id));
   }, []);
+
+
+
+  const registerFiscalAutomatico = useCallback(async (email: string, senha: string, nome?: string): Promise<{ matricula: string; profile: Profile } | null> => {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanSenha = senha.trim();
+    const baseNome = (nome || cleanEmail.split('@')[0] || 'Fiscal').trim();
+    if (!cleanEmail || !cleanSenha) return null;
+
+    const profileId = `fsc-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+
+    let existing: Profile | null = null;
+    if (isOnline) {
+      existing = await supa.getProfileById(profileId);
+    }
+
+    if (!existing) {
+      existing = profiles.find(p => p.id === profileId) || null;
+    }
+
+    const all = isOnline ? await supa.getAllProfiles() : profiles;
+    const source = all.length ? all : profiles;
+    const maxFsc = source.reduce((acc, p) => {
+      const m = (p.matricula || '').toUpperCase().match(/^FSC-(\d+)$/);
+      if (!m) return acc;
+      return Math.max(acc, Number(m[1]));
+    }, 0);
+
+    const matricula = existing?.matricula || `FSC-${String(maxFsc + 1).padStart(3, '0')}`;
+
+    const profile: Profile = {
+      id: profileId,
+      nome: baseNome,
+      tipo: 'fiscal',
+      matricula,
+      senha: cleanSenha,
+      status_online: 'offline',
+      pontos_total: existing?.pontos_total || 0,
+      lat: existing?.lat,
+      lng: existing?.lng,
+    };
+
+    setProfiles(prev => {
+      const idx = prev.findIndex(p => p.id === profile.id);
+      if (idx >= 0) return prev.map(p => p.id === profile.id ? { ...p, ...profile } : p);
+      return [...prev, profile];
+    });
+
+    if (isOnline) {
+      await supa.upsertProfile(profile);
+      await supa.registerUserAccount(cleanEmail, 'email');
+    }
+
+    addNotification(`Fiscal criado com matrícula ${matricula}.`, 'success');
+    return { matricula, profile };
+  }, [isOnline, profiles, addNotification]);
 
   // ═══ LOGIN ═══
   const login = useCallback(async (matricula: string, senha: string): Promise<Profile | null> => {
@@ -767,14 +831,71 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [isOnline, authEmail]);
 
+
+
+  const editMinhaDenuncia = useCallback((id: string, updates: { tipo?: Denuncia['tipo']; endereco?: string; descricao?: string; denunciante_nome?: string }) => {
+    const cleanEmail = (authEmail || getAuthEmail() || 'anonymous').toLowerCase();
+    const alvo = denuncias.find(d => d.id === id);
+    if (!alvo) return false;
+    if (cleanEmail === 'anonymous' || (alvo.auth_email && alvo.auth_email.toLowerCase() !== cleanEmail)) return false;
+    if (['aguardando_aprovacao', 'concluida'].includes(alvo.status)) return false;
+
+    const changed: string[] = [];
+    if (updates.tipo && updates.tipo !== alvo.tipo) changed.push(`tipo: "${alvo.tipo}" → "${updates.tipo}"`);
+    if (updates.endereco && updates.endereco.trim() !== alvo.endereco) changed.push('endereço atualizado');
+    if (updates.descricao && updates.descricao.trim() !== alvo.descricao) changed.push('descrição atualizada');
+    if ((updates.denunciante_nome || '') !== (alvo.denunciante_nome || '')) changed.push('nome do denunciante atualizado');
+    if (!changed.length) return false;
+
+    const now = new Date().toISOString();
+    const patch: Partial<Denuncia> = {
+      tipo: updates.tipo || alvo.tipo,
+      endereco: updates.endereco?.trim() || alvo.endereco,
+      descricao: updates.descricao?.trim() || alvo.descricao,
+      denunciante_nome: updates.denunciante_nome?.trim() || alvo.denunciante_nome,
+      updated_at: now,
+    };
+
+    setDenuncias(prev => prev.map(d => d.id === id ? { ...d, ...patch } : d));
+
+    if (isOnline) {
+      const descWithMatricula = alvo.denunciante_matricula
+        ? `[MATRICULA:${alvo.denunciante_matricula}] ${patch.descricao || ''}`.trim()
+        : patch.descricao;
+      supa.updateDenuncia(id, {
+        tipo: patch.tipo,
+        endereco: patch.endereco,
+        descricao: descWithMatricula,
+        denunciante_nome: patch.denunciante_nome,
+        updated_at: now,
+      });
+    }
+
+    const hist: HistoricoAtividade = {
+      id: `hist-${Date.now()}-edit-cid`,
+      fiscal_id: `cid-${cleanEmail}`,
+      denuncia_id: id,
+      tipo_acao: 'Denúncia Editada',
+      pontos: 0,
+      descricao: changed.join('; '),
+      created_at: now,
+    };
+    setHistorico(prev => [hist, ...prev]);
+    if (isOnline) supa.createHistorico(hist);
+
+    addNotification('Denúncia atualizada com sucesso.', 'success');
+    return true;
+  }, [authEmail, denuncias, isOnline, addNotification]);
+
+
   return (
     <AppContext.Provider value={{
       profiles, denuncias, relatorios, autos, historico, mensagens, currentUser, notifications, isOnline,
-      login, logout, addDenuncia, updateDenunciaStatus, designarDenuncia,
+      login, registerFiscalAutomatico, logout, addDenuncia, updateDenunciaStatus, designarDenuncia,
       upsertRelatorio: upsertRelatorioFn, addAuto, aprovarRelatorio, rejeitarRelatorio, getRelatorio, getAuto,
       addNotification, dismissNotification, getFiscalPontos,
       sendMensagem, marcarLida, getConversas, getMensagensConversa,
-      authEmail, setAuthEmail,
+      authEmail, setAuthEmail, editMinhaDenuncia,
     }}>
       {children}
     </AppContext.Provider>

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageCircle, Send, X, MapPin, Camera, Plus, ChevronRight, Clock, CheckCircle, AlertCircle, Eye, Search, ArrowLeft, Shield, Mic, MicOff, User, UserX, Settings, Loader, Navigation } from 'lucide-react';
+import { MessageCircle, Send, X, MapPin, Camera, Plus, ChevronRight, Clock, CheckCircle, AlertCircle, Eye, Search, ArrowLeft, Shield, Mic, MicOff, User, UserX, Settings, Loader, Navigation, Copy, Share2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { DenunciaTipo } from '../types';
 import { PhotoGallery } from './PhotoViewer';
@@ -13,6 +13,55 @@ const statusLabels: Record<string, { label: string; color: string; icon: React.R
   aguardando_aprovacao: { label: 'Aguardando Aprovação', color: 'bg-purple-100 text-purple-800', icon: <Clock size={16} /> },
   concluida: { label: 'Concluída', color: 'bg-green-100 text-green-800', icon: <CheckCircle size={16} /> },
 };
+
+
+
+function getStatusGuidance(status: string): { title: string; text: string; tone: string } {
+  switch (status) {
+    case 'pendente':
+      return {
+        title: 'Aguardando triagem',
+        text: 'Sua denúncia foi recebida. Em breve ela será designada para fiscalização.',
+        tone: 'bg-yellow-50 border-yellow-200 text-yellow-800',
+      };
+    case 'designada':
+      return {
+        title: 'Fiscal designado',
+        text: 'A denúncia já tem responsável e deve avançar para vistoria em breve.',
+        tone: 'bg-blue-50 border-blue-200 text-blue-800',
+      };
+    case 'em_vistoria':
+      return {
+        title: 'Vistoria em andamento',
+        text: 'A equipe está apurando os fatos em campo.',
+        tone: 'bg-orange-50 border-orange-200 text-orange-800',
+      };
+    case 'aguardando_aprovacao':
+      return {
+        title: 'Análise final',
+        text: 'O relatório técnico foi enviado e aguarda aprovação do gerente.',
+        tone: 'bg-purple-50 border-purple-200 text-purple-800',
+      };
+    case 'concluida':
+      return {
+        title: 'Processo concluído',
+        text: 'A denúncia foi finalizada com sucesso.',
+        tone: 'bg-green-50 border-green-200 text-green-800',
+      };
+    default:
+      return {
+        title: 'Em processamento',
+        text: 'Sua denúncia está em andamento.',
+        tone: 'bg-gray-50 border-gray-200 text-gray-700',
+      };
+  }
+}
+
+function getSlaProgress(createdAt: string, slaDias: number): number {
+  const totalMs = Math.max(1, slaDias * 24 * 60 * 60 * 1000);
+  const elapsed = Math.max(0, Date.now() - new Date(createdAt).getTime());
+  return Math.min(100, Math.round((elapsed / totalMs) * 100));
+}
 
 const chatResponses: Record<string, string> = {
   'anonimato': 'Sim! Você pode fazer denúncias de forma totalmente anônima. Seus dados pessoais não serão compartilhados com ninguém.',
@@ -112,7 +161,9 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   const { addDenuncia } = useApp();
   const [step, setStep] = useState(1);
   const [anonimo, setAnonimo] = useState(false);
+  const [isServidor, setIsServidor] = useState(false);
   const [nome, setNome] = useState('');
+  const [matriculaServidor, setMatriculaServidor] = useState('');
   const [tipo, setTipo] = useState<DenunciaTipo>('Construção Irregular');
   const [endereco, setEndereco] = useState('');
   const [descricao, setDescricao] = useState('');
@@ -123,6 +174,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   const [gpsCoords, setGpsCoords] = useState<{lat: number; lng: number} | null>(null);
   const [transcript, setTranscript] = useState('');
   const [speechSupported, setSpeechSupported] = useState(false);
+  const [permissionsRequested, setPermissionsRequested] = useState(false);
   const recognitionRef = useRef<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -210,6 +262,37 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
     );
   }, []);
 
+  const requestRequiredPermissions = useCallback(async () => {
+    setPermissionsRequested(true);
+
+    try {
+      if (navigator.permissions?.query) {
+        const locPerm = await navigator.permissions.query({ name: 'geolocation' as PermissionName });
+        if (locPerm.state === 'prompt' && navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            () => {},
+            () => {},
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+          );
+        }
+      } else if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          () => {},
+          () => {},
+          { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+        );
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (step === 2 && !permissionsRequested) {
+      requestRequiredPermissions();
+    }
+  }, [step, permissionsRequested, requestRequiredPermissions]);
+
   // Speech Recognition - Real voice to text
   const handleRecording = useCallback(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -294,6 +377,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
       status: 'pendente',
       sla_dias: tipo === 'Desmatamento' ? 1 : 5,
       denunciante_nome: anonimo ? undefined : nome,
+      denunciante_matricula: anonimo || !isServidor ? undefined : matriculaServidor.trim().toUpperCase(),
       denunciante_anonimo: anonimo,
       pontos_provisorio: 0,
       fotos,
@@ -346,16 +430,35 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
                 </button>
               </div>
               {!anonimo && (
-                <input
-                  value={nome}
-                  onChange={e => setNome(e.target.value)}
-                  placeholder="Seu nome completo"
-                  className="w-full border rounded-xl px-4 py-3 md:py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 md:text-lg"
-                />
+                <div className="space-y-3">
+                  <input
+                    value={nome}
+                    onChange={e => setNome(e.target.value)}
+                    placeholder="Seu nome completo"
+                    className="w-full border rounded-xl px-4 py-3 md:py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 md:text-lg"
+                  />
+
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input type="checkbox" checked={isServidor} onChange={e => setIsServidor(e.target.checked)} />
+                    Sou servidor(a) público(a)
+                  </label>
+
+                  {isServidor && (
+                    <div>
+                      <input
+                        value={matriculaServidor}
+                        onChange={e => setMatriculaServidor(e.target.value.toUpperCase())}
+                        placeholder="Matrícula do servidor (ex: FSC-013)"
+                        className="w-full border rounded-xl px-4 py-3 md:py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 md:text-lg"
+                      />
+                      <p className="text-[11px] text-gray-500 mt-1">Opcional para identificar que o denunciante também é servidor.</p>
+                    </div>
+                  )}
+                </div>
               )}
               <button
                 onClick={() => setStep(2)}
-                disabled={!anonimo && !nome.trim()}
+                disabled={!anonimo && (!nome.trim() || (isServidor && !matriculaServidor.trim()))}
                 className="w-full bg-blue-600 text-white rounded-xl py-3 md:py-4 font-semibold disabled:opacity-50 flex items-center justify-center gap-2 md:text-lg"
               >
                 Próximo <ChevronRight size={18} />
@@ -365,6 +468,11 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 
           {step === 2 && (
             <motion.div key="s2" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <p className="text-xs md:text-sm text-blue-800">
+                  O app solicita localização nesta etapa. Câmera e microfone serão solicitados somente quando você usar fotos ou ditado por voz.
+                </p>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm md:text-base font-medium text-gray-700 mb-1 block">Tipo da Denúncia</label>
@@ -557,107 +665,242 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 }
 
 function AcompanharDenuncia({ onBack }: { onBack: () => void }) {
-  const { denuncias, authEmail } = useApp();
+  const { denuncias, authEmail, editMinhaDenuncia } = useApp();
   const [busca, setBusca] = useState('');
-  
-  // Filtrar por email do usuário
-  const minhasDens = denuncias.filter(d => {
-    if (!authEmail || authEmail === 'anonymous') return true;
-    return d.auth_email === authEmail || !d.auth_email;
-  });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [editTipo, setEditTipo] = useState<DenunciaTipo>('Outros');
+  const [editEndereco, setEditEndereco] = useState('');
+  const [editDescricao, setEditDescricao] = useState('');
+  const [editNome, setEditNome] = useState('');
+
+  const cleanAuthEmail = (authEmail || '').toLowerCase();
+  const minhasDens = denuncias.filter(d => !!cleanAuthEmail && cleanAuthEmail !== 'anonymous' && d.auth_email === cleanAuthEmail);
   const filtered = minhasDens.filter(d => d.protocolo.includes(busca) || d.endereco.toLowerCase().includes(busca.toLowerCase()));
+  const selected = selectedId ? minhasDens.find(d => d.id === selectedId) || null : null;
+
+  const openDetail = (id: string) => {
+    const alvo = minhasDens.find(d => d.id === id);
+    if (!alvo) return;
+    setSelectedId(id);
+    setEditMode(false);
+    setEditTipo(alvo.tipo);
+    setEditEndereco(alvo.endereco);
+    setEditDescricao(alvo.descricao);
+    setEditNome(alvo.denunciante_nome || '');
+  };
+
+  const canEdit = (d: { status: string } | null) => {
+    if (!d) return false;
+    return !['aguardando_aprovacao', 'concluida'].includes(d.status);
+  };
+
+  const handleSaveEdit = () => {
+    if (!selected) return;
+    const ok = editMinhaDenuncia(selected.id, {
+      tipo: editTipo,
+      endereco: editEndereco,
+      descricao: editDescricao,
+      denunciante_nome: selected.denunciante_anonimo ? undefined : editNome,
+    });
+    if (ok) setEditMode(false);
+  };
+
+  const copyProtocol = async (protocolo: string) => {
+    try {
+      await navigator.clipboard.writeText(`#${protocolo}`);
+    } catch {
+      // ignore
+    }
+  };
+
+  const shareDenuncia = async (protocolo: string, tipo: string, status: string) => {
+    const text = `Denúncia ${protocolo}
+Tipo: ${tipo}
+Status: ${statusLabels[status]?.label || status}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `Protocolo ${protocolo}`, text });
+      } else {
+        await navigator.clipboard.writeText(text);
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   const statusOrder: string[] = ['pendente', 'designada', 'em_vistoria', 'aguardando_aprovacao', 'concluida'];
 
   return (
     <motion.div initial={{ x: 300, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="min-h-screen bg-gray-50">
       <div className="bg-gradient-to-r from-blue-700 to-blue-900 text-white p-4 lg:p-6 flex items-center gap-3">
-        <button onClick={onBack}><ArrowLeft size={24} /></button>
-        <h2 className="text-lg md:text-xl font-bold">Acompanhar Denúncia</h2>
+        <button onClick={() => selected ? setSelectedId(null) : onBack()}><ArrowLeft size={24} /></button>
+        <h2 className="text-lg md:text-xl font-bold">{selected ? 'Detalhes da Denúncia' : 'Acompanhar Denúncia'}</h2>
       </div>
 
       <div className="p-4 md:p-6 max-w-5xl mx-auto">
-        <div className="relative mb-4 md:mb-6">
-          <Search size={18} className="absolute left-3 top-3 md:top-4 text-gray-400" />
-          <input
-            value={busca}
-            onChange={e => setBusca(e.target.value)}
-            placeholder="Buscar por protocolo ou endereço..."
-            className="w-full border rounded-xl pl-10 pr-4 py-3 md:py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 md:text-lg"
-          />
-        </div>
+        {!selected && (
+          <>
+            <div className="relative mb-4 md:mb-6">
+              <Search size={18} className="absolute left-3 top-3 md:top-4 text-gray-400" />
+              <input
+                value={busca}
+                onChange={e => setBusca(e.target.value)}
+                placeholder="Buscar por protocolo ou endereço..."
+                className="w-full border rounded-xl pl-10 pr-4 py-3 md:py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 md:text-lg"
+              />
+            </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
-          {filtered.map((d, i) => {
-            const st = statusLabels[d.status];
-            const currentIdx = statusOrder.indexOf(d.status);
-            return (
-              <motion.div
-                key={d.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05 }}
-                className="bg-white rounded-xl p-4 md:p-5 shadow-sm border"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs md:text-sm font-mono text-gray-500">#{d.protocolo}</span>
-                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${st.color} flex items-center gap-1`}>
-                    {st.icon} {st.label}
-                  </span>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
+              {filtered.map((d, i) => {
+                const st = statusLabels[d.status];
+                const currentIdx = statusOrder.indexOf(d.status);
+                return (
+                  <motion.button
+                    type="button"
+                    key={d.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="bg-white rounded-xl p-4 md:p-5 shadow-sm border text-left"
+                    onClick={() => openDetail(d.id)}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs md:text-sm font-mono text-gray-500">#{d.protocolo}</span>
+                      <span className={`text-xs px-2 py-1 rounded-full font-medium ${st.color} flex items-center gap-1`}>
+                        {st.icon} {st.label}
+                      </span>
+                    </div>
+                    <h3 className="font-semibold text-gray-800 text-sm md:text-base">{d.tipo}</h3>
+                    <p className="text-xs md:text-sm text-gray-500 flex items-center gap-1 mt-1">
+                      <MapPin size={12} /> {d.endereco}
+                    </p>
+                    <div className="mt-3 flex items-center gap-1">
+                      {statusOrder.map((s, si) => (
+                        <React.Fragment key={s}>
+                          <div className={`w-3 h-3 rounded-full ${si <= currentIdx ? 'bg-blue-600' : 'bg-gray-200'}`} />
+                          {si < statusOrder.length - 1 && (
+                            <div className={`flex-1 h-0.5 ${si < currentIdx ? 'bg-blue-600' : 'bg-gray-200'}`} />
+                          )}
+                        </React.Fragment>
+                      ))}
+                    </div>
+                    <p className="text-[10px] md:text-xs text-gray-400 mt-2">Toque para ver detalhes</p>
+                    <div className={`mt-2 border rounded-lg px-2 py-1.5 ${getStatusGuidance(d.status).tone}`}>
+                      <p className="text-[11px] md:text-xs font-semibold">{getStatusGuidance(d.status).title}</p>
+                    </div>
+                  </motion.button>
+                );
+              })}
+              {filtered.length === 0 && (
+                <div className="text-center py-10 text-gray-400 md:col-span-2 xl:col-span-3">
+                  <Search size={40} className="mx-auto mb-2" />
+                  <p>Nenhuma denúncia encontrada</p>
                 </div>
-                <h3 className="font-semibold text-gray-800 text-sm md:text-base">{d.tipo}</h3>
-                <p className="text-xs md:text-sm text-gray-500 flex items-center gap-1 mt-1">
-                  <MapPin size={12} /> {d.endereco}
-                </p>
+              )}
+            </div>
+          </>
+        )}
 
-                {/* Timeline */}
-                <div className="mt-3 flex items-center gap-1">
-                  {statusOrder.map((s, si) => (
-                    <React.Fragment key={s}>
-                      <div className={`w-3 h-3 rounded-full ${si <= currentIdx ? 'bg-blue-600' : 'bg-gray-200'}`} />
-                      {si < statusOrder.length - 1 && (
-                        <div className={`flex-1 h-0.5 ${si < currentIdx ? 'bg-blue-600' : 'bg-gray-200'}`} />
-                      )}
-                    </React.Fragment>
-                  ))}
-                </div>
-                <div className="flex justify-between text-[9px] md:text-[10px] text-gray-400 mt-1">
-                  <span>Registro</span>
-                  <span>Design.</span>
-                  <span>Vistoria</span>
-                  <span>Análise</span>
-                  <span>Concl.</span>
+        {selected && (
+          <div className="bg-white rounded-2xl border shadow-sm p-4 md:p-6 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs md:text-sm font-mono text-gray-500">#{selected.protocolo}</p>
+                <h3 className="text-lg md:text-2xl font-bold text-gray-800">{selected.tipo}</h3>
+              </div>
+              <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusLabels[selected.status].color} flex items-center gap-1`}>
+                {statusLabels[selected.status].icon} {statusLabels[selected.status].label}
+              </span>
+            </div>
+
+            {!editMode ? (
+              <>
+                <div className="space-y-2 text-sm md:text-base">
+                  <p><span className="text-gray-500">Endereço:</span> {selected.endereco}</p>
+                  <p className="whitespace-pre-wrap"><span className="text-gray-500">Descrição:</span> {selected.descricao}</p>
+                  <p><span className="text-gray-500">Denunciante:</span> {selected.denunciante_anonimo ? 'Anônimo' : selected.denunciante_nome || 'Não informado'}</p>
+                  {selected.denunciante_matricula && <p><span className="text-gray-500">Matrícula:</span> {selected.denunciante_matricula}</p>}
+                  <p className="text-xs text-gray-500">Última atualização: {new Date(selected.updated_at).toLocaleString('pt-BR')}</p>
                 </div>
 
-                {d.fotos.length > 0 && (
-                  <div className="mt-3">
-                    <PhotoGallery
-                      photos={d.fotos}
-                      label="Suas Fotos Enviadas"
-                      maxPreview={3}
-                      metadata={{
-                        protocolo: d.protocolo,
-                        tipo: d.tipo,
-                        endereco: d.endereco,
-                        data: new Date(d.created_at).toLocaleString('pt-BR'),
-                      }}
-                    />
+                <div className={`border rounded-xl p-3 ${getStatusGuidance(selected.status).tone}`}>
+                  <p className="text-sm font-semibold">Próxima etapa: {getStatusGuidance(selected.status).title}</p>
+                  <p className="text-xs md:text-sm mt-1">{getStatusGuidance(selected.status).text}</p>
+                </div>
+
+                <div className="bg-gray-50 border rounded-xl p-3">
+                  <div className="flex justify-between text-xs text-gray-600 mb-1">
+                    <span>Andamento do SLA</span>
+                    <span>{getSlaProgress(selected.created_at, selected.sla_dias)}%</span>
                   </div>
+                  <div className="w-full h-2 bg-gray-200 rounded-full">
+                    <div className="h-full bg-blue-600 rounded-full transition-all" style={{ width: `${getSlaProgress(selected.created_at, selected.sla_dias)}%` }} />
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button onClick={() => copyProtocol(selected.protocolo)} className="flex-1 border rounded-xl px-3 py-2 text-sm font-medium flex items-center justify-center gap-1.5">
+                    <Copy size={14} /> Copiar protocolo
+                  </button>
+                  <button onClick={() => shareDenuncia(selected.protocolo, selected.tipo, selected.status)} className="flex-1 border rounded-xl px-3 py-2 text-sm font-medium flex items-center justify-center gap-1.5">
+                    <Share2 size={14} /> Compartilhar
+                  </button>
+                </div>
+
+                {selected.fotos.length > 0 && (
+                  <PhotoGallery
+                    photos={selected.fotos}
+                    label="Suas Fotos Enviadas"
+                    maxPreview={6}
+                    metadata={{
+                      protocolo: selected.protocolo,
+                      tipo: selected.tipo,
+                      endereco: selected.endereco,
+                      data: new Date(selected.created_at).toLocaleString('pt-BR'),
+                    }}
+                  />
                 )}
 
-                <p className="text-[10px] md:text-xs text-gray-400 mt-2">
-                  Criado em {new Date(d.created_at).toLocaleDateString('pt-BR')} • SLA: {d.sla_dias} dias
-                </p>
-              </motion.div>
-            );
-          })}
-          {filtered.length === 0 && (
-            <div className="text-center py-10 text-gray-400 md:col-span-2 xl:col-span-3">
-              <Search size={40} className="mx-auto mb-2" />
-              <p>Nenhuma denúncia encontrada</p>
-            </div>
-          )}
-        </div>
+                {canEdit(selected) && (
+                  <button
+                    onClick={() => setEditMode(true)}
+                    className="w-full md:w-auto bg-blue-600 text-white rounded-xl px-5 py-3 font-semibold"
+                  >
+                    Editar denúncia
+                  </button>
+                )}
+              </>
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-sm font-medium text-gray-700 mb-1 block">Tipo</label>
+                  <select value={editTipo} onChange={e => setEditTipo(e.target.value as DenunciaTipo)} className="w-full border rounded-xl px-3 py-2">
+                    {TIPOS.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-700 mb-1 block">Endereço</label>
+                  <input value={editEndereco} onChange={e => setEditEndereco(e.target.value)} className="w-full border rounded-xl px-3 py-2" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-700 mb-1 block">Descrição</label>
+                  <textarea value={editDescricao} onChange={e => setEditDescricao(e.target.value)} rows={4} className="w-full border rounded-xl px-3 py-2" />
+                </div>
+                {!selected.denunciante_anonimo && (
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 mb-1 block">Nome do denunciante</label>
+                    <input value={editNome} onChange={e => setEditNome(e.target.value)} className="w-full border rounded-xl px-3 py-2" />
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <button onClick={() => setEditMode(false)} className="flex-1 border rounded-xl px-4 py-2 font-medium">Cancelar</button>
+                  <button onClick={handleSaveEdit} className="flex-1 bg-green-600 text-white rounded-xl px-4 py-2 font-semibold">Salvar alterações</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </motion.div>
   );
@@ -669,10 +912,8 @@ export default function CidadaoModule({ onLogin, onOpenSettings }: { onLogin: ()
   const { denuncias, authEmail } = useApp();
 
   // Filtrar denúncias pelo email do usuário autenticado
-  const minhasDenuncias = denuncias.filter(d => {
-    if (!authEmail || authEmail === 'anonymous') return true;
-    return d.auth_email === authEmail || !d.auth_email;
-  });
+  const cleanAuthEmail = (authEmail || '').toLowerCase();
+  const minhasDenuncias = denuncias.filter(d => !!cleanAuthEmail && cleanAuthEmail !== 'anonymous' && d.auth_email === cleanAuthEmail);
 
   if (successProtocolo) {
     return (
@@ -832,6 +1073,7 @@ export default function CidadaoModule({ onLogin, onOpenSettings }: { onLogin: ()
                   <div className="flex-1 min-w-0">
                     <p className="text-sm md:text-base font-medium text-gray-800 truncate">{d.tipo} - {d.endereco}</p>
                     <p className="text-xs md:text-sm text-gray-400">#{d.protocolo}</p>
+                    <p className="text-[11px] text-gray-500 mt-0.5">{getStatusGuidance(d.status).title}</p>
                   </div>
                   <span className={`text-[10px] md:text-xs px-2 py-1 rounded-full font-medium ${st.color} shrink-0`}>
                     {st.label}
