@@ -106,6 +106,15 @@ function resetAllStatusesToOffline(profiles: Profile[]): Profile[] {
   return profiles.map(p => ({ ...p, status_online: 'offline' as const }));
 }
 
+function getPointsByFiscal(historico: HistoricoAtividade[]): Map<string, number> {
+  const map = new Map<string, number>();
+  historico.forEach(h => {
+    const current = map.get(h.fiscal_id) || 0;
+    map.set(h.fiscal_id, current + (h.pontos || 0));
+  });
+  return map;
+}
+
 function loadFromStorage(email?: string) {
   const key = getStorageKey(email);
   try {
@@ -257,6 +266,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveToStorage({ profiles, denuncias, relatorios, autos, historico, mensagens }, authEmail);
   }, [profiles, denuncias, relatorios, autos, historico, mensagens, authEmail]);
 
+  // ═══ RECALCULAR PONTOS DOS FISCAIS (SOMA TOTAL DO HISTÓRICO) ═══
+  useEffect(() => {
+    const pointsMap = getPointsByFiscal(historico);
+
+    setProfiles(prev => {
+      let changed = false;
+      const next = prev.map(p => {
+        if (p.tipo !== 'fiscal') return p;
+        const total = pointsMap.get(p.id) || 0;
+        if (p.pontos_total === total) return p;
+        changed = true;
+        return { ...p, pontos_total: total };
+      });
+
+      if (changed && isOnline) {
+        next.filter(p => p.tipo === 'fiscal').forEach(p => {
+          supa.updateProfilePontos(p.id, p.pontos_total);
+        });
+      }
+
+      return changed ? next : prev;
+    });
+  }, [historico, isOnline]);
+
   // ═══ REALTIME SUBSCRIPTIONS ═══
   useEffect(() => {
     if (!isOnline || !currentUser) return;
@@ -271,7 +304,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (msgChannel) channelsRef.current.push(msgChannel);
 
     const denChannel = supa.subscribeToDenuncias((updated) => {
-      setDenuncias(prev => prev.map(d => d.id === updated.id ? { ...d, ...updated } : d));
+      setDenuncias(prev => {
+        const idx = prev.findIndex(d => d.id === updated.id);
+        if (idx === -1) return [updated, ...prev];
+        return prev.map(d => d.id === updated.id ? { ...d, ...updated } : d);
+      });
+
+      // Ensure manager/fiscal instantly see citizen photos that are stored in `fotos` table.
+      supa.getFotosByDenuncia(updated.id).then((fotos) => {
+        if (!fotos.length) return;
+        setDenuncias(prev => prev.map(d => d.id === updated.id ? { ...d, fotos } : d));
+      }).catch(() => {});
     });
     if (denChannel) channelsRef.current.push(denChannel);
 
