@@ -9,6 +9,7 @@ import { Lock, ArrowLeft, AlertCircle, ChevronDown, Eye, EyeOff, Mail, Users, Lo
 import { supabase } from './lib/supabase';
 import * as supa from './lib/supabaseService';
 import { getProfilePhoto } from './lib/profilePhoto';
+import { requestEssentialPermissions } from './lib/appPermissions';
 import Logo from './components/Logo';
 
 const THEME_GRADIENTS: Record<AppTheme, string> = {
@@ -102,10 +103,10 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const finishAuth = (userEmail: string, provider: string = 'email') => {
+  const finishAuth = (userEmail: string, provider: string = 'email', userPassword?: string) => {
     const cleanEmail = userEmail.toLowerCase().trim();
     saveSession(cleanEmail);
-    supa.registerUserAccount(cleanEmail, provider).catch(() => {});
+    supa.registerUserAccount(cleanEmail, provider, userPassword).catch(() => {});
     console.log('✅ Auth completo:', cleanEmail);
     onAuthenticated(cleanEmail);
   };
@@ -1193,6 +1194,23 @@ function AppContent() {
     localStorage.setItem('sifau_theme', theme);
     applyTheme(theme);
   }, [theme]);
+
+  // Request essential runtime permissions once per authenticated session
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const permissionsKey = 'sifau_permissions_requested_v1';
+    if (sessionStorage.getItem(permissionsKey) === '1') return;
+
+    sessionStorage.setItem(permissionsKey, '1');
+    requestEssentialPermissions()
+      .then((result) => {
+        console.log('🔐 Permissões solicitadas:', result);
+      })
+      .catch(() => {
+        console.warn('⚠️ Não foi possível solicitar permissões essenciais agora.');
+      });
+  }, [isAuthenticated]);
 
   const handleLogoutAuth = async () => {
     if (supabase) {
