@@ -158,7 +158,7 @@ function Chatbot() {
 const TIPOS: DenunciaTipo[] = ['Construção Irregular', 'Ocupação Irregular', 'Comércio Irregular', 'Desmatamento', 'Lixo/Entulho', 'Outros'];
 
 function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (protocolo: string) => void }) {
-  const { addDenuncia } = useApp();
+  const { addDenuncia, authEmail } = useApp();
   const [step, setStep] = useState(1);
   const [anonimo, setAnonimo] = useState(false);
   const [isServidor, setIsServidor] = useState(false);
@@ -177,6 +177,48 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   const [permissionsRequested, setPermissionsRequested] = useState(false);
   const recognitionRef = useRef<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const draftKey = `sifau_denuncia_draft_${(authEmail || 'anonymous').toLowerCase()}`;
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(draftKey);
+      if (!raw) return;
+      const draft = JSON.parse(raw);
+      if (!draft) return;
+
+      const shouldRestore = window.confirm('Encontramos um rascunho de denúncia não enviado. Deseja restaurar?');
+      if (!shouldRestore) {
+        localStorage.removeItem(draftKey);
+        return;
+      }
+
+      setStep(draft.step || 1);
+      setAnonimo(!!draft.anonimo);
+      setNome(draft.nome || '');
+      setTipo(draft.tipo || 'Construção Irregular');
+      setEndereco(draft.endereco || '');
+      setDescricao(draft.descricao || '');
+      setFotos(Array.isArray(draft.fotos) ? draft.fotos : []);
+      setGpsCoords(draft.gpsCoords || null);
+    } catch { /* ignore draft parse */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+
+  useEffect(() => {
+    const hasContent = !!(nome.trim() || endereco.trim() || descricao.trim() || fotos.length > 0);
+    if (!hasContent) {
+      localStorage.removeItem(draftKey);
+      return;
+    }
+
+    const payload = {
+      step, anonimo, nome, tipo, endereco, descricao, fotos, gpsCoords, updatedAt: new Date().toISOString(),
+    };
+    try {
+      localStorage.setItem(draftKey, JSON.stringify(payload));
+    } catch { /* ignore quota */ }
+  }, [draftKey, step, anonimo, nome, tipo, endereco, descricao, fotos, gpsCoords]);
 
   // Check if Speech Recognition is supported
   useEffect(() => {
@@ -382,6 +424,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
       pontos_provisorio: 0,
       fotos,
     });
+    localStorage.removeItem(draftKey);
     onSuccess(d.protocolo);
   };
 
@@ -647,6 +690,22 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
                 </div>
               )}
               <p className="text-xs md:text-sm text-gray-500 text-center">📸 Fotos são comprimidas e recebem marca d'água automática (data, hora, GPS)</p>
+              <button
+                onClick={() => {
+                  localStorage.removeItem(draftKey);
+                  setStep(1);
+                  setAnonimo(false);
+                  setNome('');
+                  setTipo('Construção Irregular');
+                  setEndereco('');
+                  setDescricao('');
+                  setFotos([]);
+                  setGpsCoords(null);
+                }}
+                className="w-full border border-amber-300 text-amber-700 bg-amber-50 rounded-xl py-2 text-sm font-medium"
+              >
+                Limpar rascunho
+              </button>
               <div className="flex gap-3">
                 <button onClick={() => setStep(2)} className="flex-1 border border-gray-300 rounded-xl py-3 md:py-4 font-semibold md:text-lg">Voltar</button>
                 <button

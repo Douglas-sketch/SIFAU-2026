@@ -12,6 +12,8 @@
 DROP TABLE IF EXISTS notificacoes;
 DROP TABLE IF EXISTS mensagens;
 DROP TABLE IF EXISTS fotos;
+DROP TABLE IF EXISTS denuncia_arquivos;
+DROP TABLE IF EXISTS user_feedback;
 DROP TABLE IF EXISTS historico_atividades;
 DROP TABLE IF EXISTS autos_infracao;
 DROP TABLE IF EXISTS relatorios;
@@ -97,6 +99,32 @@ CREATE TABLE fotos (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- ─── TABELA: DENUNCIA ARQUIVOS (Storage metadata) ──────────
+CREATE TABLE denuncia_arquivos (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  denuncia_id TEXT NOT NULL,
+  bucket TEXT DEFAULT 'denuncias',
+  storage_path TEXT NOT NULL,
+  mime_type TEXT,
+  tamanho_bytes BIGINT DEFAULT 0,
+  largura_px INTEGER,
+  altura_px INTEGER,
+  criado_por_email TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- ─── TABELA: USER FEEDBACK (UX) ─────────────────────────────
+CREATE TABLE user_feedback (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  auth_email TEXT,
+  categoria TEXT DEFAULT 'geral',
+  mensagem TEXT NOT NULL,
+  nota INTEGER CHECK (nota >= 1 AND nota <= 5),
+  dispositivo TEXT,
+  app_version TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- ─── TABELA: MENSAGENS ──────────────────────────────────────
 CREATE TABLE mensagens (
   id TEXT PRIMARY KEY,
@@ -126,6 +154,7 @@ CREATE TABLE user_accounts (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   email TEXT UNIQUE NOT NULL,
   provider TEXT DEFAULT 'email',
+  senha TEXT,
   primeiro_acesso TIMESTAMPTZ DEFAULT now(),
   ultimo_acesso TIMESTAMPTZ DEFAULT now(),
   total_acessos INTEGER DEFAULT 1,
@@ -145,6 +174,10 @@ CREATE INDEX idx_msg_para ON mensagens(para_id);
 CREATE INDEX idx_hist_fiscal ON historico_atividades(fiscal_id);
 CREATE INDEX idx_den_email ON denuncias(auth_email);
 CREATE INDEX idx_ua_email ON user_accounts(email);
+CREATE INDEX idx_arq_denuncia ON denuncia_arquivos(denuncia_id);
+CREATE INDEX idx_arq_email ON denuncia_arquivos(criado_por_email);
+CREATE INDEX idx_feedback_email ON user_feedback(auth_email);
+CREATE INDEX idx_feedback_data ON user_feedback(created_at DESC);
 
 -- ═══════════════════════════════════════════════════════════════
 --  ROW LEVEL SECURITY (Desabilitar para simplicidade)
@@ -157,6 +190,8 @@ ALTER TABLE historico_atividades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE fotos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mensagens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notificacoes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE denuncia_arquivos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_feedback ENABLE ROW LEVEL SECURITY;
 
 -- Permitir TUDO para anon (app interno sem auth)
 CREATE POLICY "allow_all" ON profiles FOR ALL USING (true) WITH CHECK (true);
@@ -167,6 +202,8 @@ CREATE POLICY "allow_all" ON historico_atividades FOR ALL USING (true) WITH CHEC
 CREATE POLICY "allow_all" ON fotos FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all" ON mensagens FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all" ON notificacoes FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow_all" ON denuncia_arquivos FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow_all" ON user_feedback FOR ALL USING (true) WITH CHECK (true);
 ALTER TABLE user_accounts ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "allow_all" ON user_accounts FOR ALL USING (true) WITH CHECK (true);
 
@@ -211,6 +248,8 @@ END $$;
 
 ALTER PUBLICATION supabase_realtime ADD TABLE mensagens;
 ALTER PUBLICATION supabase_realtime ADD TABLE denuncias;
+ALTER PUBLICATION supabase_realtime ADD TABLE denuncia_arquivos;
+ALTER PUBLICATION supabase_realtime ADD TABLE user_feedback;
 ALTER PUBLICATION supabase_realtime ADD TABLE profiles;
 
 -- ═══════════════════════════════════════════════════════════════
