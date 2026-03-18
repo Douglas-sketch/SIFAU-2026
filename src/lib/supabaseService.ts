@@ -6,6 +6,24 @@ import { RealtimeChannel } from '@supabase/supabase-js';
 
 let supabaseReady = false;
 
+
+function appendMatriculaToDescricao(descricao: string, matricula?: string): string {
+  if (!matricula) return descricao || '';
+  const clean = matricula.trim().toUpperCase();
+  if (!clean) return descricao || '';
+  const prefix = `[MATRICULA:${clean}]`;
+  if ((descricao || '').startsWith(prefix)) return descricao || '';
+  return `${prefix} ${descricao || ''}`.trim();
+}
+
+function extractMatriculaFromDescricao(descricao: string): { matricula?: string; descricaoLimpa: string } {
+  const text = descricao || '';
+  const match = text.match(/^\[MATRICULA:([A-Z0-9-]+)\]\s*/);
+  if (!match) return { descricaoLimpa: text };
+  return { matricula: match[1], descricaoLimpa: text.replace(match[0], '').trim() };
+}
+
+
 // ============================================
 // HEALTH CHECK
 // ============================================
@@ -116,6 +134,37 @@ export async function updateProfilePontos(userId: string, pontos: number): Promi
   } catch { /* */ }
 }
 
+
+export async function getProfileById(profileId: string): Promise<Profile | null> {
+  if (!ok()) return null;
+  try {
+    const { data } = await supabase!
+      .from('profiles')
+      .select('*')
+      .eq('id', profileId)
+      .maybeSingle();
+    return data ? mapProfile(data) : null;
+  } catch { return null; }
+}
+
+export async function upsertProfile(profile: Profile): Promise<void> {
+  if (!ok()) return;
+  try {
+    await supabase!.from('profiles').upsert({
+      id: profile.id,
+      nome: profile.nome,
+      tipo: profile.tipo,
+      matricula: profile.matricula,
+      senha: profile.senha,
+      status: profile.status_online,
+      pontos: profile.pontos_total,
+      latitude: profile.lat || null,
+      longitude: profile.lng || null,
+      updated_at: new Date().toISOString(),
+    });
+  } catch { /* */ }
+}
+
 // ============================================
 // DENÚNCIAS
 // ============================================
@@ -137,7 +186,7 @@ export async function createDenuncia(d: Denuncia): Promise<Denuncia | null> {
       id: d.id,
       protocolo: d.protocolo,
       tipo: d.tipo,
-      descricao: d.descricao || '',
+      descricao: appendMatriculaToDescricao(d.descricao || '', d.denunciante_matricula),
       endereco: d.endereco || '',
       latitude: d.lat || 0,
       longitude: d.lng || 0,
@@ -273,6 +322,17 @@ export async function createHistorico(h: HistoricoAtividade): Promise<void> {
       created_at: h.created_at,
     });
   } catch { /* */ }
+}
+
+export async function getAllHistorico(): Promise<HistoricoAtividade[]> {
+  if (!ok()) return [];
+  try {
+    const { data } = await supabase!
+      .from('historico_atividades')
+      .select('*')
+      .order('created_at', { ascending: false });
+    return (data || []).map(mapHistorico);
+  } catch { return []; }
 }
 
 // ============================================
@@ -479,6 +539,22 @@ export async function registerUserAccount(email: string, provider: string = 'ema
   }
 }
 
+export async function userAccountExists(email: string): Promise<boolean> {
+  if (!supabase || !email || email === 'anonymous') return false;
+  try {
+    const { data, error } = await supabase
+      .from('user_accounts')
+      .select('email')
+      .eq('email', email.toLowerCase())
+      .limit(1)
+      .maybeSingle();
+    if (error) return false;
+    return !!data;
+  } catch {
+    return false;
+  }
+}
+
 // ============================================
 // MAPPERS
 // ============================================
@@ -497,6 +573,7 @@ function mapProfile(r: any): Profile {
 }
 
 function mapDenuncia(r: any): Denuncia {
+  const parsed = extractMatriculaFromDescricao(r.descricao || '');
   return {
     id: r.id,
     protocolo: r.protocolo,
@@ -504,12 +581,13 @@ function mapDenuncia(r: any): Denuncia {
     endereco: r.endereco || '',
     lat: r.latitude || 0,
     lng: r.longitude || 0,
-    descricao: r.descricao || '',
+    descricao: parsed.descricaoLimpa,
     status: r.status || 'pendente',
     sla_dias: r.sla_horas ? Math.ceil(r.sla_horas / 24) : 3,
     fiscal_id: r.fiscal_id || undefined,
     gerente_id: r.gerente_id || undefined,
     denunciante_nome: r.denunciante_nome,
+    denunciante_matricula: parsed.matricula,
     denunciante_anonimo: r.denunciante_anonimo || false,
     created_at: r.created_at,
     updated_at: r.updated_at || r.created_at,

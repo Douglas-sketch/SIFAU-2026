@@ -67,6 +67,11 @@ function checkAccount(email: string, password: string): 'ok' | 'wrong_password' 
   return 'ok';
 }
 
+function accountExistsLocal(email: string): boolean {
+  const db = loadAccounts();
+  return !!db[email.toLowerCase().trim()];
+}
+
 function saveSession(email: string) {
   localStorage.setItem(AUTH_SESSION, JSON.stringify({ email, ts: Date.now() }));
   // CRITICAL: Also save to AUTH_EMAIL_KEY so AppContext can read it
@@ -82,7 +87,7 @@ function getSession(): string | null {
 
 function clearSession() {
   localStorage.removeItem(AUTH_SESSION);
-  // DON'T remove AUTH_EMAIL_KEY — keep it for storage key
+  localStorage.removeItem(AUTH_EMAIL_KEY);
   // DON'T remove ACCOUNTS_DB — keep saved accounts
 }
 
@@ -116,33 +121,35 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
     const p = password.trim();
 
     try {
-      // Verificar conta local (sempre funciona)
+      if (supabase) {
+        const { error: authError } = await supabase.auth.signInWithPassword({ email: e, password: p });
+        if (!authError) {
+          saveAccount(e, p);
+          finishAuth(e);
+          return;
+        }
+
+        const msg = (authError.message || '').toLowerCase();
+        if (msg.includes('invalid login credentials')) {
+          setError('E-mail ou senha incorretos. Verifique seus dados.');
+          return;
+        }
+        if (msg.includes('email not confirmed')) {
+          setError('Confirme seu e-mail para entrar na conta.');
+          return;
+        }
+
+        setError('Não foi possível entrar agora. Tente novamente em instantes.');
+        return;
+      }
+
       const result = checkAccount(e, p);
-      
       if (result === 'ok') {
-        // Conta existe e senha correta — entrar!
         finishAuth(e);
         return;
       }
-      
-      if (result === 'wrong_password') {
-        setError('Senha incorreta. Tente novamente.');
-        return;
-      }
-      
-      // Conta não encontrada localmente — tentar Supabase Auth
-      if (supabase) {
-        try {
-          const { error: authError } = await supabase.auth.signInWithPassword({ email: e, password: p });
-          if (!authError) {
-            saveAccount(e, p);
-            finishAuth(e);
-            return;
-          }
-        } catch { /* continuar */ }
-      }
-      
-      setError('Conta não encontrada. Crie uma conta primeiro.');
+
+      setError(result === 'wrong_password' ? 'Senha incorreta. Tente novamente.' : 'Conta não encontrada neste dispositivo. Conecte à internet para validar sua conta.');
     } catch {
       setError('Erro ao conectar. Tente novamente.');
     } finally {
@@ -169,34 +176,49 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
     const p = password.trim();
 
     try {
-      // Verificar se já existe
-      const exists = checkAccount(e, p);
-      if (exists === 'ok' || exists === 'wrong_password') {
-        setError('Este e-mail já está cadastrado. Faça login.');
-        setLoading(false);
+      if (supabase) {
+        const existsRemote = await supa.userAccountExists(e);
+        if (existsRemote) {
+          setError('Este e-mail já está cadastrado. Faça login.');
+          return;
+        }
+
+        const { data, error: signUpError } = await supabase.auth.signUp({
+          email: e,
+          password: p,
+          options: { data: { app: 'sifau' } },
+        });
+
+        if (signUpError) {
+          const msg = (signUpError.message || '').toLowerCase();
+          if (msg.includes('already registered') || msg.includes('already exists')) {
+            setError('Este e-mail já está cadastrado. Faça login.');
+            return;
+          }
+          setError('Não foi possível criar a conta agora. Tente novamente.');
+          return;
+        }
+
+        saveAccount(e, p);
+        if (data?.session) {
+          finishAuth(e);
+        } else {
+          setSuccess('Conta criada com sucesso! Se necessário, confirme seu e-mail para entrar.');
+          setMode('login');
+          setPassword('');
+          setConfirmPassword('');
+        }
         return;
       }
 
-      // Salvar conta localmente (SEMPRE — é a fonte da verdade)
-      saveAccount(e, p);
-      
-      // Tentar criar no Supabase Auth também (melhor esforço)
-      if (supabase) {
-        try {
-          await supabase.auth.signUp({
-            email: e,
-            password: p,
-            options: { data: { app: 'sifau' } },
-          });
-        } catch { /* ignorar — conta local já foi salva */ }
+      if (accountExistsLocal(e)) {
+        setError('Este e-mail já está cadastrado neste dispositivo. Faça login.');
+        return;
       }
-
-      // Entrar automaticamente
+      saveAccount(e, p);
       finishAuth(e);
     } catch {
-      // Mesmo com erro, salvar e entrar
-      saveAccount(e, p);
-      finishAuth(e);
+      setError('Erro ao criar conta. Tente novamente.');
     } finally {
       setLoading(false);
     }
@@ -229,41 +251,44 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           }
           
           if (data?.url) {
-            // Open the OAuth URL in an in-app browser (Chrome Custom Tab)
+            // Open OAuth inside the app (do not leave the app)
             try {
               const { Browser } = await import('@capacitor/browser');
-              
-              // Listen for the app URL event (when redirect comes back)
               const { App: CapApp } = await import('@capacitor/app');
-              CapApp.addListener('appUrlOpen', async (event: { url: string }) => {
-                // Extract tokens from the redirect URL
+
+              let browserFinishedListener: { remove: () => void } | null = null;
+              const appUrlListener = await CapApp.addListener('appUrlOpen', async (event: { url: string }) => {
                 const url = new URL(event.url);
                 const params = new URLSearchParams(url.hash.substring(1)); // After #
                 const accessToken = params.get('access_token');
                 const refreshToken = params.get('refresh_token');
-                
+
                 if (accessToken && refreshToken) {
-                  // Set the session in Supabase
                   const { data: sessionData } = await supabase!.auth.setSession({
                     access_token: accessToken,
                     refresh_token: refreshToken,
                   });
-                  
+
                   if (sessionData?.user?.email) {
                     finishAuth(sessionData.user.email, 'google');
                   }
                 }
-                
-                // Close the in-app browser
+
                 await Browser.close();
+                appUrlListener.remove();
+                browserFinishedListener?.remove();
                 setGoogleLoading(false);
               });
-              
-              // Open the OAuth URL
+
+              browserFinishedListener = await Browser.addListener('browserFinished', () => {
+                appUrlListener.remove();
+                browserFinishedListener?.remove();
+                setGoogleLoading(false);
+              });
+
               await Browser.open({ url: data.url, windowName: '_self' });
             } catch {
-              // Fallback: open in external browser
-              window.open(data.url, '_blank');
+              setError('Não foi possível abrir o login do Google dentro do app.');
               setGoogleLoading(false);
             }
           } else {
@@ -679,16 +704,22 @@ function RecuperarSenha({ onBack, theme }: { onBack: () => void; theme: AppTheme
 //  LOGIN DO SERVIDOR (Matrícula + Senha)
 // ═══════════════════════════════════════════════════════════════
 function LoginScreen({ onBack, onSuccess, theme }: { onBack: () => void; onSuccess: () => void; theme: AppTheme }) {
-  const { login } = useApp();
+  const { login, registerFiscalAutomatico } = useApp();
+  const [mode, setMode] = useState<'login' | 'register'>('login');
   const [matricula, setMatricula] = useState('');
+  const [emailFiscal, setEmailFiscal] = useState('');
+  const [nomeFiscal, setNomeFiscal] = useState('');
   const [senha, setSenha] = useState('');
+  const [confirmSenha, setConfirmSenha] = useState('');
   const [showSenha, setShowSenha] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
   const [showRecuperar, setShowRecuperar] = useState(false);
 
   const handleLogin = async () => {
     setError('');
+    setSuccess('');
     setLoading(true);
     try {
       const user = await login(matricula, senha);
@@ -699,6 +730,41 @@ function LoginScreen({ onBack, onSuccess, theme }: { onBack: () => void; onSucce
       }
     } catch {
       setError('Erro de conexão. Tente novamente.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRegisterFiscal = async () => {
+    if (!emailFiscal.trim() || !senha.trim()) {
+      setError('Informe e-mail e senha para criar o acesso.');
+      return;
+    }
+    if (senha.length < 6) {
+      setError('A senha deve ter no mínimo 6 caracteres.');
+      return;
+    }
+    if (senha !== confirmSenha) {
+      setError('As senhas não coincidem.');
+      return;
+    }
+
+    setError('');
+    setSuccess('');
+    setLoading(true);
+    try {
+      const created = await registerFiscalAutomatico(emailFiscal, senha, nomeFiscal);
+      if (!created) {
+        setError('Não foi possível criar o acesso agora.');
+        return;
+      }
+
+      setMatricula(created.matricula);
+      setSuccess(`Acesso criado com sucesso! Matrícula gerada: ${created.matricula}`);
+      setMode('login');
+      setConfirmSenha('');
+    } catch {
+      setError('Erro ao criar acesso do fiscal. Tente novamente.');
     } finally {
       setLoading(false);
     }
@@ -731,33 +797,100 @@ function LoginScreen({ onBack, onSuccess, theme }: { onBack: () => void; onSucce
             {/* Connection info removed for cleaner UI */}
           </div>
 
+          <div className="flex bg-white/5 rounded-xl p-1 mb-4">
+            <button
+              onClick={() => { setMode('login'); setError(''); setSuccess(''); }}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'login' ? 'bg-blue-600 text-white' : 'text-white/70'}`}
+            >
+              Entrar
+            </button>
+            <button
+              onClick={() => { setMode('register'); setError(''); setSuccess(''); }}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'register' ? 'bg-blue-600 text-white' : 'text-white/70'}`}
+            >
+              Novo Fiscal
+            </button>
+          </div>
+
           <div className="space-y-4 md:space-y-5">
-            <div>
-              <label className="text-sm md:text-base text-blue-200 mb-1 block">Matrícula</label>
-              <input
-                value={matricula}
-                onChange={e => setMatricula(e.target.value)}
-                placeholder="Ex: FSC-001 ou GER-001"
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 md:py-4 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-400 md:text-lg"
-              />
-            </div>
-            <div className="relative">
-              <label className="text-sm md:text-base text-blue-200 mb-1 block">Senha</label>
-              <input
-                type={showSenha ? 'text' : 'password'}
-                value={senha}
-                onChange={e => setSenha(e.target.value)}
-                placeholder="Digite sua senha"
-                onKeyDown={e => e.key === 'Enter' && handleLogin()}
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 md:py-4 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-400 md:text-lg pr-12"
-              />
-              <button
-                onClick={() => setShowSenha(!showSenha)}
-                className="absolute right-3 top-9 md:top-10 text-white/50 hover:text-white/80 transition"
-              >
-                {showSenha ? <EyeOff size={20} /> : <Eye size={20} />}
-              </button>
-            </div>
+            {mode === 'login' ? (
+              <>
+                <div>
+                  <label className="text-sm md:text-base text-blue-200 mb-1 block">Matrícula</label>
+                  <input
+                    value={matricula}
+                    onChange={e => setMatricula(e.target.value)}
+                    placeholder="Ex: FSC-001 ou GER-001"
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 md:py-4 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-400 md:text-lg"
+                  />
+                </div>
+                <div className="relative">
+                  <label className="text-sm md:text-base text-blue-200 mb-1 block">Senha</label>
+                  <input
+                    type={showSenha ? 'text' : 'password'}
+                    value={senha}
+                    onChange={e => setSenha(e.target.value)}
+                    placeholder="Digite sua senha"
+                    onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 md:py-4 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-400 md:text-lg pr-12"
+                  />
+                  <button
+                    onClick={() => setShowSenha(!showSenha)}
+                    className="absolute right-3 top-9 md:top-10 text-white/50 hover:text-white/80 transition"
+                  >
+                    {showSenha ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className="text-sm md:text-base text-blue-200 mb-1 block">E-mail do fiscal</label>
+                  <input
+                    type="email"
+                    value={emailFiscal}
+                    onChange={e => setEmailFiscal(e.target.value)}
+                    placeholder="fiscal@prefeitura.gov.br"
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 md:py-4 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-400 md:text-lg"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm md:text-base text-blue-200 mb-1 block">Nome (opcional)</label>
+                  <input
+                    value={nomeFiscal}
+                    onChange={e => setNomeFiscal(e.target.value)}
+                    placeholder="Nome do fiscal"
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 md:py-4 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-400 md:text-lg"
+                  />
+                </div>
+                <div className="relative">
+                  <label className="text-sm md:text-base text-blue-200 mb-1 block">Senha</label>
+                  <input
+                    type={showSenha ? 'text' : 'password'}
+                    value={senha}
+                    onChange={e => setSenha(e.target.value)}
+                    placeholder="Defina uma senha"
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 md:py-4 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-400 md:text-lg pr-12"
+                  />
+                  <button
+                    onClick={() => setShowSenha(!showSenha)}
+                    className="absolute right-3 top-9 md:top-10 text-white/50 hover:text-white/80 transition"
+                  >
+                    {showSenha ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
+                </div>
+                <div>
+                  <label className="text-sm md:text-base text-blue-200 mb-1 block">Confirmar senha</label>
+                  <input
+                    type={showSenha ? 'text' : 'password'}
+                    value={confirmSenha}
+                    onChange={e => setConfirmSenha(e.target.value)}
+                    placeholder="Repita a senha"
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 md:py-4 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-400 md:text-lg"
+                  />
+                </div>
+              </>
+            )}
 
             {error && (
               <motion.div
@@ -769,29 +902,40 @@ function LoginScreen({ onBack, onSuccess, theme }: { onBack: () => void; onSucce
               </motion.div>
             )}
 
+            {success && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-green-500/20 border border-green-400/30 rounded-xl p-3 text-green-100 text-sm"
+              >
+                {success}
+              </motion.div>
+            )}
+
             <button
-              onClick={handleLogin}
-              disabled={loading || !matricula.trim() || !senha.trim()}
+              onClick={mode === 'login' ? handleLogin : handleRegisterFiscal}
+              disabled={loading || (mode === 'login' ? (!matricula.trim() || !senha.trim()) : (!emailFiscal.trim() || !senha.trim() || !confirmSenha.trim()))}
               className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 disabled:opacity-60 text-white rounded-xl py-3 md:py-4 font-semibold transition mt-2 md:text-lg"
             >
-              {loading ? 'Conectando...' : 'Entrar'}
+              {loading ? 'Processando...' : mode === 'login' ? 'Entrar' : 'Criar acesso fiscal'}
             </button>
 
             {/* Forgot password */}
-            <button
-              onClick={() => setShowRecuperar(true)}
-              className="w-full text-blue-300/80 hover:text-blue-200 text-sm transition py-2"
-            >
-              Esqueci minha senha
-            </button>
+            {mode === 'login' && (
+              <button
+                onClick={() => setShowRecuperar(true)}
+                className="w-full text-blue-300/80 hover:text-blue-200 text-sm transition py-2"
+              >
+                Esqueci minha senha
+              </button>
+            )}
           </div>
 
           {/* Login info removed */}
 
           <div className="mt-6 bg-white/5 rounded-xl p-4 border border-white/10">
             <p className="text-xs text-blue-300/60 text-center">
-              🛡️ Acesso exclusivo para servidores cadastrados. 
-              Sua senha é pessoal e intransferível.
+              🛡️ Acesso para servidores. Novos fiscais podem ser cadastrados automaticamente pelo e-mail.
             </p>
             <p className="text-[10px] text-blue-300/40 text-center mt-2">
               Problemas de acesso? Contate o administrador:<br />
@@ -1009,6 +1153,32 @@ function AppContent() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [showSettings, currentUser, screen, logout]);
 
+  // Android (Capacitor): intercept hardware back to avoid closing app
+  useEffect(() => {
+    let removeListener: (() => void) | undefined;
+
+    const setupBackButton = async () => {
+      const isCapacitor = !!(window as any).Capacitor;
+      if (!isCapacitor) return;
+
+      try {
+        const { App: CapApp } = await import('@capacitor/app');
+        const listener = await CapApp.addListener('backButton', ({ canGoBack }) => {
+          if (canGoBack) {
+            window.history.back();
+          }
+          // Se não houver histórico, não fecha o app.
+        });
+        removeListener = () => listener.remove();
+      } catch {
+        // plugin indisponível no ambiente web
+      }
+    };
+
+    setupBackButton();
+    return () => removeListener?.();
+  }, []);
+
   // Push history state when navigating
   const navigateTo = (newScreen: typeof screen) => {
     window.history.pushState({ screen: newScreen }, '');
@@ -1032,6 +1202,7 @@ function AppContent() {
     clearSession();
     sessionStorage.removeItem('sifau_screen');
     setIsAuthenticated(false);
+    setAuthEmail('anonymous');
     setScreen('home');
     logout();
   };
