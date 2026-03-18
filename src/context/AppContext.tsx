@@ -902,10 +902,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setDenuncias(prev => prev.map(d => d.id === id ? { ...d, ...patch } : d));
 
     if (isOnline) {
+      const descWithMatricula = alvo.denunciante_matricula
+        ? `[MATRICULA:${alvo.denunciante_matricula}] ${patch.descricao || ''}`.trim()
+        : patch.descricao;
       supa.updateDenuncia(id, {
         tipo: patch.tipo,
         endereco: patch.endereco,
-        descricao: patch.descricao,
+        descricao: descWithMatricula,
         denunciante_nome: patch.denunciante_nome,
         updated_at: now,
       });

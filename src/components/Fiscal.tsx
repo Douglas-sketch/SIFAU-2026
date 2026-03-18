@@ -1519,7 +1519,7 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
               <p className="text-sm md:text-base text-gray-600">{denuncia.descricao}</p>
               <p className="text-sm md:text-base text-gray-600">
                 <span className="text-gray-500">Denunciante:</span>{' '}
-                <span className="font-medium text-gray-700">{denuncia.denunciante_anonimo ? 'Anônimo' : denuncia.denunciante_nome || 'N/I'}</span>
+                <span className="font-medium text-gray-700">{denuncia.denunciante_anonimo ? 'Anônimo' : denuncia.denunciante_nome || 'N/I'}</span>{denuncia.denunciante_matricula ? ` • ${denuncia.denunciante_matricula}` : ''}
               </p>
               <div className="flex gap-3 text-xs md:text-sm text-gray-500">
                 <span>SLA: {denuncia.sla_dias} dias</span>

@@ -446,6 +446,11 @@ function DenunciaDetail({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =
                 <span className="text-gray-500">Denunciante:</span>{' '}
                 <span className="font-medium">{denuncia.denunciante_anonimo ? 'Anônimo' : denuncia.denunciante_nome || 'N/I'}</span>
               </p>
+              {denuncia.denunciante_matricula && (
+                <p className="text-sm md:text-base text-gray-700">
+                  <span className="text-gray-500">Matrícula:</span> <span className="font-medium">{denuncia.denunciante_matricula}</span>
+                </p>
+              )}
               <div className="flex gap-4 text-xs md:text-sm text-gray-500">
                 <span>SLA: {denuncia.sla_dias} dias</span>
                 <span>Pts previstos: {denuncia.pontos_provisorio}</span>

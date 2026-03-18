@@ -161,7 +161,9 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   const { addDenuncia, authEmail } = useApp();
   const [step, setStep] = useState(1);
   const [anonimo, setAnonimo] = useState(false);
+  const [isServidor, setIsServidor] = useState(false);
   const [nome, setNome] = useState('');
+  const [matriculaServidor, setMatriculaServidor] = useState('');
   const [tipo, setTipo] = useState<DenunciaTipo>('Construção Irregular');
   const [endereco, setEndereco] = useState('');
   const [descricao, setDescricao] = useState('');
@@ -417,6 +419,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
       status: 'pendente',
       sla_dias: tipo === 'Desmatamento' ? 1 : 5,
       denunciante_nome: anonimo ? undefined : nome,
+      denunciante_matricula: anonimo || !isServidor ? undefined : matriculaServidor.trim().toUpperCase(),
       denunciante_anonimo: anonimo,
       pontos_provisorio: 0,
       fotos,
@@ -470,16 +473,35 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
                 </button>
               </div>
               {!anonimo && (
-                <input
-                  value={nome}
-                  onChange={e => setNome(e.target.value)}
-                  placeholder="Seu nome completo"
-                  className="w-full border rounded-xl px-4 py-3 md:py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 md:text-lg"
-                />
+                <div className="space-y-3">
+                  <input
+                    value={nome}
+                    onChange={e => setNome(e.target.value)}
+                    placeholder="Seu nome completo"
+                    className="w-full border rounded-xl px-4 py-3 md:py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 md:text-lg"
+                  />
+
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input type="checkbox" checked={isServidor} onChange={e => setIsServidor(e.target.checked)} />
+                    Sou servidor(a) público(a)
+                  </label>
+
+                  {isServidor && (
+                    <div>
+                      <input
+                        value={matriculaServidor}
+                        onChange={e => setMatriculaServidor(e.target.value.toUpperCase())}
+                        placeholder="Matrícula do servidor (ex: FSC-013)"
+                        className="w-full border rounded-xl px-4 py-3 md:py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 md:text-lg"
+                      />
+                      <p className="text-[11px] text-gray-500 mt-1">Opcional para identificar que o denunciante também é servidor.</p>
+                    </div>
+                  )}
+                </div>
               )}
               <button
                 onClick={() => setStep(2)}
-                disabled={!anonimo && !nome.trim()}
+                disabled={!anonimo && (!nome.trim() || (isServidor && !matriculaServidor.trim()))}
                 className="w-full bg-blue-600 text-white rounded-xl py-3 md:py-4 font-semibold disabled:opacity-50 flex items-center justify-center gap-2 md:text-lg"
               >
                 Próximo <ChevronRight size={18} />
@@ -857,6 +879,7 @@ Status: ${statusLabels[status]?.label || status}`;
                   <p><span className="text-gray-500">Endereço:</span> {selected.endereco}</p>
                   <p className="whitespace-pre-wrap"><span className="text-gray-500">Descrição:</span> {selected.descricao}</p>
                   <p><span className="text-gray-500">Denunciante:</span> {selected.denunciante_anonimo ? 'Anônimo' : selected.denunciante_nome || 'Não informado'}</p>
+                  {selected.denunciante_matricula && <p><span className="text-gray-500">Matrícula:</span> {selected.denunciante_matricula}</p>}
                   <p className="text-xs text-gray-500">Última atualização: {new Date(selected.updated_at).toLocaleString('pt-BR')}</p>
                 </div>
 
