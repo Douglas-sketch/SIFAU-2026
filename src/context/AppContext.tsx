@@ -21,7 +21,7 @@ interface AppState {
   notifications: Notification[];
   isOnline: boolean;
   login: (matricula: string, senha: string) => Promise<Profile | null>;
-  registerFiscalAutomatico: (email: string, senha: string, nome?: string) => Promise<{ matricula: string; profile: Profile } | null>;
+  registerFiscalAutomatico: (email: string, senha: string, nome?: string, tipo?: 'fiscal' | 'gerente') => Promise<{ matricula: string; profile: Profile } | null>;
   logout: () => void;
   addDenuncia: (d: Omit<Denuncia, 'id' | 'protocolo' | 'created_at' | 'updated_at'>) => Denuncia;
   updateDenunciaStatus: (id: string, status: DenunciaStatus, extra?: Partial<Denuncia>) => void;
@@ -408,13 +408,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
 
 
-  const registerFiscalAutomatico = useCallback(async (email: string, senha: string, nome?: string): Promise<{ matricula: string; profile: Profile } | null> => {
+  const registerFiscalAutomatico = useCallback(async (email: string, senha: string, nome?: string, tipo: 'fiscal' | 'gerente' = 'fiscal'): Promise<{ matricula: string; profile: Profile } | null> => {
     const cleanEmail = email.trim().toLowerCase();
     const cleanSenha = senha.trim();
-    const baseNome = (nome || cleanEmail.split('@')[0] || 'Fiscal').trim();
+    const baseNome = (nome || cleanEmail.split('@')[0] || (tipo === 'gerente' ? 'Gerente' : 'Fiscal')).trim();
     if (!cleanEmail || !cleanSenha) return null;
 
-    const profileId = `fsc-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+    const prefix = tipo === 'gerente' ? 'GER' : 'FSC';
+    const profileId = `${prefix.toLowerCase()}-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
 
     let existing: Profile | null = null;
     if (isOnline) {
@@ -427,18 +428,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const all = isOnline ? await supa.getAllProfiles() : profiles;
     const source = all.length ? all : profiles;
-    const maxFsc = source.reduce((acc, p) => {
-      const m = (p.matricula || '').toUpperCase().match(/^FSC-(\d+)$/);
+    const maxByTipo = source.reduce((acc, p) => {
+      const m = (p.matricula || '').toUpperCase().match(new RegExp(`^${prefix}-(\\d+)$`));
       if (!m) return acc;
       return Math.max(acc, Number(m[1]));
     }, 0);
 
-    const matricula = existing?.matricula || `FSC-${String(maxFsc + 1).padStart(3, '0')}`;
+    const matricula = existing?.matricula || `${prefix}-${String(maxByTipo + 1).padStart(3, '0')}`;
 
     const profile: Profile = {
       id: profileId,
       nome: baseNome,
-      tipo: 'fiscal',
+      tipo,
       matricula,
       senha: cleanSenha,
       status_online: 'offline',
@@ -458,7 +459,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await supa.registerUserAccount(cleanEmail, 'email');
     }
 
-    addNotification(`Fiscal criado com matrícula ${matricula}.`, 'success');
+    addNotification(`${tipo === 'gerente' ? 'Gerente' : 'Fiscal'} criado com matrícula ${matricula}.`, 'success');
     return { matricula, profile };
   }, [isOnline, profiles, addNotification]);
 
