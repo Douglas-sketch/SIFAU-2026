@@ -151,7 +151,19 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
 
         const msg = (authError.message || '').toLowerCase();
         if (msg.includes('invalid login credentials')) {
-          setError('E-mail ou senha incorretos. Verifique seus dados.');
+          // Fallback para contas legadas salvas em user_accounts (sem Supabase Auth)
+          const legacyStatus = await supa.checkUserAccountCredentials(e, p);
+          if (legacyStatus === 'ok') {
+            const role = getAccountAccessType(e);
+            saveAccount(e, p, role);
+            finishAuth(e, 'email', undefined, role);
+            return;
+          }
+          setError(
+            legacyStatus === 'wrong_password'
+              ? 'Senha incorreta. Verifique e tente novamente.'
+              : 'Conta não encontrada no Auth. Se sua conta é antiga, confirme variáveis do Supabase e tabela user_accounts.'
+          );
           return;
         }
         if (msg.includes('email not confirmed')) {
@@ -363,7 +375,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         }
       } else {
         // Verificar se existe localmente
-        if (checkAccount(trimmedEmail, '') !== 'not_found') {
+        if (accountExistsLocal(trimmedEmail)) {
           setSuccess('Modo offline. Sua conta existe localmente. Tente lembrar a senha ou contate o administrador.');
         } else {
           setError('Conta não encontrada.');

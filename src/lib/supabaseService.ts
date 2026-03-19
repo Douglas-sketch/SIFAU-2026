@@ -601,6 +601,27 @@ export async function userAccountExists(email: string): Promise<boolean> {
   }
 }
 
+export async function checkUserAccountCredentials(
+  email: string,
+  password: string
+): Promise<'ok' | 'wrong_password' | 'not_found'> {
+  if (!supabase || !email || email === 'anonymous') return 'not_found';
+  try {
+    const { data, error } = await supabase
+      .from('user_accounts')
+      .select('email, senha')
+      .eq('email', email.toLowerCase())
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) return 'not_found';
+    if ((data.senha || '') !== password) return 'wrong_password';
+    return 'ok';
+  } catch {
+    return 'not_found';
+  }
+}
+
 // ============================================
 // MAPPERS
 // ============================================
