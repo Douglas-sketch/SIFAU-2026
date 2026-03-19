@@ -35,38 +35,43 @@ export async function checkConnection(): Promise<boolean> {
 
   try {
     addLog('🔍 Testando conexão...');
-    
-    // Step 1: Simple fetch test to see if the URL is reachable
-    const { data, error } = await supabase
+
+    // Preferir user_accounts (contas de e-mail), com fallback para profiles.
+    const { data: uaData, error: uaError } = await supabase
+      .from('user_accounts')
+      .select('id, email')
+      .limit(1);
+
+    if (!uaError) {
+      addLog(`✅ Supabase OK via user_accounts (${uaData?.length || 0} registro(s) lido(s)).`);
+      supabaseReady = true;
+      return true;
+    }
+
+    const { data: pfData, error: pfError } = await supabase
       .from('profiles')
       .select('id, nome')
       .limit(1);
 
-    if (error) {
-      addLog(`❌ Erro: ${error.message}`);
-      if (error.code === '42P01' || error.message.includes('relation')) {
-        addLog('⚠️ TABELAS NÃO EXISTEM! Execute o SQL no Supabase.');
-      }
-      if (error.message.includes('FetchError') || error.message.includes('fetch')) {
-        addLog('⚠️ Servidor não acessível. Verifique a URL.');
-      }
-      if (error.message.includes('JWT') || error.message.includes('apikey')) {
-        addLog('⚠️ Chave API inválida.');
-      }
-      supabaseReady = false;
-      return false;
+    if (!pfError) {
+      addLog(`✅ Supabase OK via profiles (${pfData?.length || 0} registro(s) lido(s)).`);
+      supabaseReady = true;
+      return true;
     }
 
-    if (!data || data.length === 0) {
-      addLog('⚠️ Conexão OK mas tabela profiles está VAZIA');
-      addLog('⚠️ Execute o SQL com os INSERTs dos usuários');
-      supabaseReady = false;
-      return false;
+    const error = pfError || uaError;
+    addLog(`❌ Erro: ${error?.message || 'Falha desconhecida'}`);
+    if (error?.code === '42P01' || (error?.message || '').includes('relation')) {
+      addLog('⚠️ Tabelas esperadas não encontradas (profiles/user_accounts). Verifique o schema no projeto atual.');
     }
-
-    addLog(`✅ Supabase OK! ${data.length} profile(s) encontrado(s): ${data[0]?.nome}`);
-    supabaseReady = true;
-    return true;
+    if ((error?.message || '').includes('FetchError') || (error?.message || '').includes('fetch')) {
+      addLog('⚠️ Servidor não acessível. Verifique URL/projeto/rede.');
+    }
+    if ((error?.message || '').includes('JWT') || (error?.message || '').includes('apikey')) {
+      addLog('⚠️ Chave API inválida ou sem permissão.');
+    }
+    supabaseReady = false;
+    return false;
   } catch (e: any) {
     addLog(`❌ Exceção: ${e?.message || String(e)}`);
     supabaseReady = false;
