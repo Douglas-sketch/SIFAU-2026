@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .env.local
+.env
 android/
 ios/
 *.apk
