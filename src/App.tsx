@@ -502,6 +502,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
             {!supabaseStatus.configured && (
               <div className="bg-amber-500/20 border border-amber-400/30 rounded-xl p-3 text-amber-100 text-xs mb-4">
                 Supabase não configurado neste build. Defina <strong>VITE_SUPABASE_URL</strong> e <strong>VITE_SUPABASE_ANON_KEY</strong> no build
+                ou configure em <code>public/runtime-config.js</code> (window.__SIFAU_SUPABASE_URL / window.__SIFAU_SUPABASE_ANON_KEY)
                 ou salve no localStorage as chaves <code>sifau_supabase_url</code> e <code>sifau_supabase_anon_key</code>.
               </div>
             )}
