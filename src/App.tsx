@@ -243,8 +243,6 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         if (data?.session) {
           finishAuth(e, 'email', undefined, accessType);
           if (serverMsg) setSuccess(`Conta de servidor criada com sucesso!${serverMsg}`);
-        if (data?.session) {
-          finishAuth(e, 'email', undefined, accessType);
         } else {
           setSuccess(`Conta criada com sucesso!${serverMsg} Se necessário, confirme seu e-mail para entrar.`);
           setMode('login');
@@ -266,7 +264,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         }
       }
       finishAuth(e, 'email', undefined, accessType);
-    } catch {
+    } catch (_error) {
       setError('Erro ao criar conta. Tente novamente.');
     } finally {
       setLoading(false);
