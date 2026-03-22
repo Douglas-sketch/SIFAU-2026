@@ -7,7 +7,6 @@ const runtimeUrl = (() => {
   try {
     const win = window as any;
     return win.__SIFAU_SUPABASE_URL || localStorage.getItem('sifau_supabase_url') || '';
-    return localStorage.getItem('sifau_supabase_url') || '';
   } catch {
     return '';
   }
@@ -16,7 +15,6 @@ const runtimeAnonKey = (() => {
   try {
     const win = window as any;
     return win.__SIFAU_SUPABASE_ANON_KEY || localStorage.getItem('sifau_supabase_anon_key') || '';
-    return localStorage.getItem('sifau_supabase_anon_key') || '';
   } catch {
     return '';
   }

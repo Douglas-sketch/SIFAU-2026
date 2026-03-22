@@ -116,7 +116,6 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const [accessType, setAccessType] = useState<AccessType>('denunciante');
   const [serverType, setServerType] = useState<'fiscal' | 'gerente'>('fiscal');
   const [error, setError] = useState('');
@@ -171,7 +170,12 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           return;
         }
         if (msg.includes('email not confirmed')) {
-          setError('Confirme seu e-mail para entrar na conta.');
+          const localStatus = checkAccount(e, p);
+          if (localStatus === 'ok') {
+            finishAuth(e, 'email', undefined, getAccountAccessType(e));
+            return;
+          }
+          setError('Sua conta foi criada, mas o provedor exige confirmação de e-mail. Acesse com a conta local ou peça para desativar confirmação no Supabase.');
           return;
         }
 
@@ -247,15 +251,8 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
             serverMsg = ` Matrícula única gerada: ${created.matricula}.`;
           }
         }
-        if (data?.session) {
-          finishAuth(e, 'email', undefined, accessType);
-          if (serverMsg) setSuccess(`Conta de servidor criada com sucesso!${serverMsg}`);
-        } else {
-          setSuccess(`Conta criada com sucesso!${serverMsg} Se necessário, confirme seu e-mail para entrar.`);
-          setMode('login');
-          setPassword('');
-          setConfirmPassword('');
-        }
+        finishAuth(e, 'email', undefined, accessType);
+        if (serverMsg) setSuccess(`Conta de servidor criada com sucesso!${serverMsg}`);
         return;
       }
 
@@ -275,104 +272,6 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
       setError('Erro ao criar conta. Tente novamente.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    setError('');
-    setGoogleLoading(true);
-    try {
-      if (supabase) {
-        // Detect if running inside Capacitor (Android app)
-        const isCapacitor = !!(window as any).Capacitor;
-        
-        if (isCapacitor) {
-          // ANDROID APP: Open in-app browser, then capture redirect
-          const redirectUrl = 'com.sifau.app://auth/callback';
-          
-          const { data, error: authError } = await supabase.auth.signInWithOAuth({
-            provider: 'google',
-            options: {
-              redirectTo: redirectUrl,
-              skipBrowserRedirect: true, // Don't auto-redirect, we handle it
-            },
-          });
-          
-          if (authError) {
-            setError('Erro ao conectar com Google: ' + authError.message);
-            setGoogleLoading(false);
-            return;
-          }
-          
-          if (data?.url) {
-            // Open OAuth inside the app (do not leave the app)
-            try {
-              const { Browser } = await import('@capacitor/browser');
-              const { App: CapApp } = await import('@capacitor/app');
-
-              let browserFinishedListener: { remove: () => void } | null = null;
-              const appUrlListener = await CapApp.addListener('appUrlOpen', async (event: { url: string }) => {
-                const url = new URL(event.url);
-                const params = new URLSearchParams(url.hash.substring(1)); // After #
-                const accessToken = params.get('access_token');
-                const refreshToken = params.get('refresh_token');
-
-                if (accessToken && refreshToken) {
-                  const { data: sessionData } = await supabase!.auth.setSession({
-                    access_token: accessToken,
-                    refresh_token: refreshToken,
-                  });
-
-                  if (sessionData?.user?.email) {
-                    finishAuth(sessionData.user.email, 'google');
-                  }
-                }
-
-                await Browser.close();
-                appUrlListener.remove();
-                browserFinishedListener?.remove();
-                setGoogleLoading(false);
-              });
-
-              browserFinishedListener = await Browser.addListener('browserFinished', () => {
-                appUrlListener.remove();
-                browserFinishedListener?.remove();
-                setGoogleLoading(false);
-              });
-
-              await Browser.open({ url: data.url, windowName: '_self' });
-            } catch {
-              setError('Não foi possível abrir o login do Google dentro do app.');
-              setGoogleLoading(false);
-            }
-          } else {
-            setError('Não foi possível obter URL de login do Google.');
-            setGoogleLoading(false);
-          }
-        } else {
-          // WEB BROWSER: Normal redirect flow
-          const redirectUrl = window.location.origin + window.location.pathname;
-          
-          const { error: authError } = await supabase.auth.signInWithOAuth({
-            provider: 'google',
-            options: {
-              redirectTo: redirectUrl,
-            },
-          });
-          
-          if (authError) {
-            setError('Erro ao conectar com Google: ' + authError.message);
-            setGoogleLoading(false);
-          }
-          // If no error, browser will redirect to Google login page
-        }
-      } else {
-        setError('Google login requer conexão com o servidor.');
-        setGoogleLoading(false);
-      }
-    } catch (e: any) {
-      setError(e?.message || 'Erro ao conectar com Google.');
-      setGoogleLoading(false);
     }
   };
 
@@ -648,57 +547,6 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
               )}
             </div>
 
-            {/* Divider */}
-            {mode !== 'forgot' && (
-              <div className="flex items-center gap-3 my-4">
-                <div className="flex-1 h-px bg-white/10"></div>
-                <span className="text-white/30 text-xs">ou</span>
-                <div className="flex-1 h-px bg-white/10"></div>
-              </div>
-            )}
-
-            {/* Debug: listar contas existentes no banco para teste */}
-            {mode === 'login' && (
-              <div className="mt-3">
-                <button
-                  onClick={handleLoadRegisteredAccounts}
-                  disabled={loadingAccounts}
-                  className="w-full bg-white/5 hover:bg-white/10 border border-white/15 text-white/80 rounded-xl py-2 text-xs transition"
-                >
-                  {loadingAccounts ? 'Carregando contas do banco...' : 'Ver contas cadastradas neste projeto (teste)'}
-                </button>
-                {registeredAccounts.length > 0 && (
-                  <div className="mt-2 max-h-32 overflow-auto rounded-xl border border-white/10 bg-black/20 p-2 space-y-1">
-                    {registeredAccounts.map((acc, idx) => (
-                      <div key={`${acc.email}-${idx}`} className="text-[11px] text-blue-100">
-                        <strong>{acc.email}</strong> • {acc.access_type || 'n/d'}{acc.server_type ? `/${acc.server_type}` : ''} • {acc.provider || 'email'}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Google Login */}
-            {mode !== 'forgot' && (
-              <button
-                onClick={handleGoogleLogin}
-                disabled={googleLoading}
-                className="w-full bg-white/10 hover:bg-white/15 border border-white/15 text-white rounded-xl py-3 font-medium transition flex items-center justify-center gap-3 text-sm"
-              >
-                {googleLoading ? (
-                  <Loader2 size={18} className="animate-spin" />
-                ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24">
-                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
-                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                  </svg>
-                )}
-                {googleLoading ? 'Conectando...' : 'Continuar com Google'}
-              </button>
-            )}
           </motion.div>
 
           {/* Footer info */}
