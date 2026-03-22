@@ -9,6 +9,7 @@ import { useApp } from '../context/AppContext';
 import { Denuncia, TIPO_MULTA_VALORES } from '../types';
 import Mensagens from './Mensagens';
 import { PhotoGallery } from './PhotoViewer';
+import { notifyNewTask, requestNotificationPermission } from '../lib/notifications';
 
 const statusColors: Record<string, string> = {
   designada: 'bg-blue-500',
@@ -1327,14 +1328,28 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
             </button>
             <button
               onClick={() => {
-                const printWindow = window.open('', '_blank');
-                if (!printWindow) return;
                 const fotosHtml = fotosRel.map(f => `<img src="${f}" style="width:200px;height:150px;object-fit:cover;border-radius:8px;border:1px solid #ddd;" />`).join('');
                 const assHtml = assinatura ? `<div style="margin-top:16px;"><p style="font-weight:bold;color:#555;font-size:12px;">ASSINATURA DIGITAL</p><img src="${assinatura}" style="height:60px;border:1px solid #ddd;border-radius:4px;padding:4px;background:#f9fafb;" /></div>` : '';
                 const osHtml = `${os20 ? '<span style="background:#dcfce7;color:#166534;padding:4px 10px;border-radius:12px;font-size:12px;font-weight:bold;">✅ O.S. 2.0 — Cumprida (+50 pts)</span>' : ''}${os40 ? '<span style="background:#dcfce7;color:#166534;padding:4px 10px;border-radius:12px;font-size:12px;font-weight:bold;margin-left:8px;">✅ O.S. 4.0 — Notificação (+50 pts)</span>' : ''}`;
-                printWindow.document.write(`<!DOCTYPE html><html><head><title>Relatório - ${denuncia.protocolo}</title><style>body{font-family:Arial,sans-serif;margin:40px;color:#333;line-height:1.6;}h1{color:#1e3a8a;border-bottom:3px solid #1e3a8a;padding-bottom:8px;}h2{color:#1e40af;margin-top:24px;}.info{background:#f0f4ff;padding:16px;border-radius:8px;margin:16px 0;}.photos{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}pre{white-space:pre-wrap;word-wrap:break-word;font-size:13px;background:#f9fafb;padding:16px;border:1px solid #e5e7eb;border-radius:8px;}.footer{margin-top:40px;padding-top:16px;border-top:2px solid #e5e7eb;text-align:center;font-size:11px;color:#999;}@media print{body{margin:20px;}}</style></head><body><h1>🛡️ SIFAU — Relatório de Fiscalização</h1><div class="info"><p><strong>Protocolo:</strong> #${denuncia.protocolo}</p><p><strong>Tipo:</strong> ${denuncia.tipo}</p><p><strong>Endereço:</strong> ${denuncia.endereco}</p><p><strong>Data:</strong> ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'})}</p><p><strong>Fiscal:</strong> ${currentUser?.nome} (${currentUser?.matricula})</p><p><strong>Status:</strong> ${statusLabels[denuncia.status]}</p></div>${osHtml ? `<div style="margin:12px 0;">${osHtml}</div>` : ''}<h2>📋 Relatório Técnico</h2><pre>${textoRelatorio}</pre>${fotosRel.length > 0 ? `<h2>📷 Fotos do Fiscal (${fotosRel.length})</h2><div class="photos">${fotosHtml}</div>` : ''}${assHtml}<div class="footer"><p>Documento gerado pelo SIFAU — Sistema Inteligente de Fiscalização e Atividades Urbanas</p><p>${new Date().toLocaleString('pt-BR')}</p></div></body></html>`);
-                printWindow.document.close();
-                setTimeout(() => printWindow.print(), 500);
+                const html = `<!DOCTYPE html><html><head><title>Relatório - ${denuncia.protocolo}</title><style>body{font-family:Arial,sans-serif;margin:40px;color:#333;line-height:1.6;}h1{color:#1e3a8a;border-bottom:3px solid #1e3a8a;padding-bottom:8px;}h2{color:#1e40af;margin-top:24px;}.info{background:#f0f4ff;padding:16px;border-radius:8px;margin:16px 0;}.photos{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}pre{white-space:pre-wrap;word-wrap:break-word;font-size:13px;background:#f9fafb;padding:16px;border:1px solid #e5e7eb;border-radius:8px;}.footer{margin-top:40px;padding-top:16px;border-top:2px solid #e5e7eb;text-align:center;font-size:11px;color:#999;}@media print{body{margin:20px;}}</style></head><body><h1>🛡️ SIFAU — Relatório de Fiscalização</h1><div class="info"><p><strong>Protocolo:</strong> #${denuncia.protocolo}</p><p><strong>Tipo:</strong> ${denuncia.tipo}</p><p><strong>Endereço:</strong> ${denuncia.endereco}</p><p><strong>Data:</strong> ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'})}</p><p><strong>Fiscal:</strong> ${currentUser?.nome} (${currentUser?.matricula})</p><p><strong>Status:</strong> ${statusLabels[denuncia.status]}</p></div>${osHtml ? `<div style="margin:12px 0;">${osHtml}</div>` : ''}<h2>📋 Relatório Técnico</h2><pre>${textoRelatorio}</pre>${fotosRel.length > 0 ? `<h2>📷 Fotos do Fiscal (${fotosRel.length})</h2><div class="photos">${fotosHtml}</div>` : ''}${assHtml}<div class="footer"><p>Documento gerado pelo SIFAU — Sistema Inteligente de Fiscalização e Atividades Urbanas</p><p>${new Date().toLocaleString('pt-BR')}</p></div></body></html>`;
+                const iframe = document.createElement('iframe');
+                iframe.style.position = 'fixed';
+                iframe.style.right = '0';
+                iframe.style.bottom = '0';
+                iframe.style.width = '0';
+                iframe.style.height = '0';
+                iframe.style.border = '0';
+                document.body.appendChild(iframe);
+                const doc = iframe.contentWindow?.document;
+                if (!doc) return;
+                doc.open();
+                doc.write(html);
+                doc.close();
+                setTimeout(() => {
+                  iframe.contentWindow?.focus();
+                  iframe.contentWindow?.print();
+                  setTimeout(() => document.body.removeChild(iframe), 1000);
+                }, 500);
               }}
               className="w-full bg-slate-700 text-white rounded-xl py-3 md:py-4 font-semibold flex items-center justify-center gap-2 md:text-lg"
             >
@@ -1638,6 +1653,7 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
   const [viewingReport, setViewingReport] = useState<Denuncia | null>(null);
   const { getConversas, currentUser } = useApp();
   const totalUnread = currentUser ? getConversas(currentUser.id).reduce((s, c) => s + c.unread, 0) : 0;
+  const knownTaskIdsRef = useRef<Set<string>>(new Set());
 
   // Handle device back button
   useEffect(() => {
@@ -1675,6 +1691,37 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
     if (newTab !== 'home') window.history.pushState({ view: 'tab' }, '');
     setTab(newTab);
   };
+
+  // Notificação sonora + browser para nova tarefa designada
+  useEffect(() => {
+    if (!currentUser) return;
+    const minhasDesignadas = denuncias.filter(d => d.fiscal_id === currentUser.id && d.status === 'designada');
+    const nextIds = new Set(minhasDesignadas.map(d => d.id));
+
+    minhasDesignadas.forEach(d => {
+      if (!knownTaskIdsRef.current.has(d.id)) {
+        try {
+          const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+          if (Ctx) {
+            const ctx = new Ctx();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.frequency.value = 880;
+            gain.gain.value = 0.08;
+            osc.start();
+            osc.stop(ctx.currentTime + 0.18);
+          }
+        } catch { /* ignore audio failure */ }
+        requestNotificationPermission().then(granted => {
+          if (granted) notifyNewTask(currentUser.nome || 'Fiscal', d.protocolo, d.tipo);
+        }).catch(() => {});
+      }
+    });
+
+    knownTaskIdsRef.current = nextIds;
+  }, [denuncias, currentUser]);
 
   if (viewingReport) {
     const fresh = denuncias.find(d => d.id === viewingReport.id);

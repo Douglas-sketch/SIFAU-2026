@@ -21,7 +21,7 @@ interface AppState {
   notifications: Notification[];
   isOnline: boolean;
   login: (matricula: string, senha: string) => Promise<Profile | null>;
-  registerFiscalAutomatico: (email: string, senha: string, nome?: string) => Promise<{ matricula: string; profile: Profile } | null>;
+  registerFiscalAutomatico: (email: string, senha: string, nome?: string, tipo?: 'fiscal' | 'gerente') => Promise<{ matricula: string; profile: Profile } | null>;
   logout: () => void;
   addDenuncia: (d: Omit<Denuncia, 'id' | 'protocolo' | 'created_at' | 'updated_at'>) => Denuncia;
   updateDenunciaStatus: (id: string, status: DenunciaStatus, extra?: Partial<Denuncia>) => void;
@@ -65,6 +65,7 @@ function getDeviceId(): string {
 }
 
 const DEVICE_ID = getDeviceId();
+const SERVER_SESSION_KEY = 'sifau_server_session_v1';
 
 // Auth email for per-account storage — reads from the same key as App.tsx saves to
 function getAuthEmail(): string {
@@ -168,6 +169,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const currentUserRef = useRef<Profile | null>(null);
 
   useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
+
+  // Restaurar sessão de servidor (fiscal/gerente) para não voltar ao login técnico ao reabrir
+  useEffect(() => {
+    if (currentUser) return;
+    try {
+      const raw = localStorage.getItem(SERVER_SESSION_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { userId?: string };
+      if (!parsed?.userId) return;
+      const user = profiles.find(p => p.id === parsed.userId);
+      if (user && (user.tipo === 'fiscal' || user.tipo === 'gerente')) {
+        setCurrentUser({ ...user, status_online: 'online' as const });
+      }
+    } catch { /* */ }
+  }, [profiles, currentUser]);
 
   // ═══ AUTO-OFFLINE ═══
   useEffect(() => {
@@ -408,13 +424,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
 
 
-  const registerFiscalAutomatico = useCallback(async (email: string, senha: string, nome?: string): Promise<{ matricula: string; profile: Profile } | null> => {
+  const registerFiscalAutomatico = useCallback(async (email: string, senha: string, nome?: string, tipo: 'fiscal' | 'gerente' = 'fiscal'): Promise<{ matricula: string; profile: Profile } | null> => {
     const cleanEmail = email.trim().toLowerCase();
     const cleanSenha = senha.trim();
-    const baseNome = (nome || cleanEmail.split('@')[0] || 'Fiscal').trim();
+    const baseNome = (nome || cleanEmail.split('@')[0] || (tipo === 'gerente' ? 'Gerente' : 'Fiscal')).trim();
     if (!cleanEmail || !cleanSenha) return null;
 
-    const profileId = `fsc-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+    const prefix = tipo === 'gerente' ? 'GER' : 'FSC';
+    const profileId = `${prefix.toLowerCase()}-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
 
     let existing: Profile | null = null;
     if (isOnline) {
@@ -427,18 +444,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const all = isOnline ? await supa.getAllProfiles() : profiles;
     const source = all.length ? all : profiles;
-    const maxFsc = source.reduce((acc, p) => {
-      const m = (p.matricula || '').toUpperCase().match(/^FSC-(\d+)$/);
+    const maxByTipo = source.reduce((acc, p) => {
+      const m = (p.matricula || '').toUpperCase().match(new RegExp(`^${prefix}-(\\d+)$`));
       if (!m) return acc;
       return Math.max(acc, Number(m[1]));
     }, 0);
 
-    const matricula = existing?.matricula || `FSC-${String(maxFsc + 1).padStart(3, '0')}`;
+    const matricula = existing?.matricula || `${prefix}-${String(maxByTipo + 1).padStart(3, '0')}`;
 
     const profile: Profile = {
       id: profileId,
       nome: baseNome,
-      tipo: 'fiscal',
+      tipo,
       matricula,
       senha: cleanSenha,
       status_online: 'offline',
@@ -458,7 +475,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await supa.registerUserAccount(cleanEmail, 'email');
     }
 
-    addNotification(`Fiscal criado com matrícula ${matricula}.`, 'success');
+    addNotification(`${tipo === 'gerente' ? 'Gerente' : 'Fiscal'} criado com matrícula ${matricula}.`, 'success');
     return { matricula, profile };
   }, [isOnline, profiles, addNotification]);
 
@@ -527,6 +544,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return [...prev, user];
       });
       setCurrentUser(user);
+      try { localStorage.setItem(SERVER_SESSION_KEY, JSON.stringify({ userId: user.id, ts: Date.now() })); } catch { /* */ }
       return user;
     }
 
@@ -542,6 +560,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return [...prev, user];
           });
           setCurrentUser(user);
+          try { localStorage.setItem(SERVER_SESSION_KEY, JSON.stringify({ userId: user.id, ts: Date.now() })); } catch { /* */ }
           return user;
         }
       } catch (e) {
@@ -562,6 +581,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     channelsRef.current.forEach(ch => supa.unsubscribe(ch));
     channelsRef.current = [];
     setCurrentUser(null);
+    try { localStorage.removeItem(SERVER_SESSION_KEY); } catch { /* */ }
   }, [currentUser]);
 
   // ═══ DENÚNCIAS ═══
