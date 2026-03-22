@@ -249,14 +249,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
           if (!cancelled && profs.length) {
             setProfiles(prev => {
-              const merged = ensureAllProfiles(prev).map(p => {
+              const base = ensureAllProfiles(prev);
+              const merged = base.map(p => {
                 const fromSupa = profs.find(sp => sp.id === p.id);
                 if (fromSupa) {
                   return { ...p, ...fromSupa, senha: p.senha || fromSupa.senha, status_online: 'offline' as const };
                 }
                 return p;
               });
-              return merged;
+
+              const extras = profs
+                .filter(sp => !merged.some(mp => mp.id === sp.id))
+                .map(sp => ({ ...sp, status_online: 'offline' as const }));
+
+              return [...merged, ...extras];
             });
           }
           if (!cancelled && dens.length) {
@@ -373,17 +379,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return merged;
         });
         if (freshProfs.length) {
-          setProfiles(prev => prev.map(p => {
-            const fresh = freshProfs.find(fp => fp.id === p.id);
-            if (fresh) {
-              return {
-                ...p, ...fresh,
-                senha: p.senha || fresh.senha,
-                status_online: p.id === currentUserRef.current?.id ? 'online' as const : fresh.status_online,
-              };
-            }
-            return p;
-          }));
+          setProfiles(prev => {
+            const updated = prev.map(p => {
+              const fresh = freshProfs.find(fp => fp.id === p.id);
+              if (fresh) {
+                return {
+                  ...p, ...fresh,
+                  senha: p.senha || fresh.senha,
+                  status_online: p.id === currentUserRef.current?.id ? 'online' as const : fresh.status_online,
+                };
+              }
+              return p;
+            });
+
+            const extras = freshProfs
+              .filter(fp => !updated.some(up => up.id === fp.id))
+              .map(fp => ({
+                ...fp,
+                status_online: fp.id === currentUserRef.current?.id ? 'online' as const : fp.status_online,
+              }));
+
+            return ensureAllProfiles([...updated, ...extras]);
+          });
         }
       } catch { /* ignore */ }
     }, 5000);
