@@ -1,8 +1,8 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Credenciais do Supabase
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://cyuokqtbwydfymfffaqw.supabase.co';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN5dW9rcXRid3lkZnltZmZmYXF3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzMjMyODAsImV4cCI6MjA4Nzg5OTI4MH0.tJx9Zi0CfDfkRTEhSpYpeSCKxg0LNUodrckiC5_F7z0';
+// Credenciais do Supabase (somente via variáveis de ambiente)
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 let supabase: SupabaseClient | null = null;
 export const diagnosticLog: string[] = [];
@@ -32,7 +32,7 @@ if (SUPABASE_URL && SUPABASE_ANON_KEY) {
     supabase = null;
   }
 } else {
-  addLog('⚠️ Supabase não configurado — modo offline');
+  addLog('⚠️ Supabase não configurado — defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY. Modo offline ativo.');
 }
 
 export { supabase, addLog };
