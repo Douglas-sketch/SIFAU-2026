@@ -117,6 +117,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [accessType, setAccessType] = useState<AccessType>('denunciante');
+  const [serverType, setServerType] = useState<'fiscal' | 'gerente'>('fiscal');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -232,10 +233,20 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         }
 
         saveAccount(e, p, accessType);
+        let serverMsg = '';
+        if (accessType === 'servidor') {
+          const created = await supa.ensureServerAccessByEmail(e, p, serverType);
+          if (created?.matricula) {
+            serverMsg = ` Matrícula única gerada: ${created.matricula}.`;
+          }
+        }
+        if (data?.session) {
+          finishAuth(e, 'email', undefined, accessType);
+          if (serverMsg) setSuccess(`Conta de servidor criada com sucesso!${serverMsg}`);
         if (data?.session) {
           finishAuth(e, 'email', undefined, accessType);
         } else {
-          setSuccess('Conta criada com sucesso! Se necessário, confirme seu e-mail para entrar.');
+          setSuccess(`Conta criada com sucesso!${serverMsg} Se necessário, confirme seu e-mail para entrar.`);
           setMode('login');
           setPassword('');
           setConfirmPassword('');
@@ -248,6 +259,12 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         return;
       }
       saveAccount(e, p, accessType);
+      if (accessType === 'servidor') {
+        const created = await supa.ensureServerAccessByEmail(e, p, serverType);
+        if (created?.matricula) {
+          setSuccess(`Conta de servidor criada! Matrícula única: ${created.matricula}`);
+        }
+      }
       finishAuth(e, 'email', undefined, accessType);
     } catch {
       setError('Erro ao criar conta. Tente novamente.');
@@ -530,6 +547,20 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                       className="w-full bg-white/10 border border-white/15 rounded-xl pl-10 pr-4 py-3 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm"
                     />
                   </div>
+                </div>
+              )}
+
+              {mode === 'register' && accessType === 'servidor' && (
+                <div>
+                  <label className="text-xs text-blue-200/80 mb-1 block">Perfil de servidor</label>
+                  <select
+                    value={serverType}
+                    onChange={e => setServerType(e.target.value as 'fiscal' | 'gerente')}
+                    className="w-full bg-white/10 border border-white/15 rounded-xl px-3 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm"
+                  >
+                    <option value="fiscal" className="text-black">Fiscal</option>
+                    <option value="gerente" className="text-black">Gerente</option>
+                  </select>
                 </div>
               )}
 

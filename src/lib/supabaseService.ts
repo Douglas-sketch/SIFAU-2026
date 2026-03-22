@@ -627,6 +627,67 @@ export async function checkUserAccountCredentials(
   }
 }
 
+export async function ensureServerAccessByEmail(
+  email: string,
+  password: string,
+  tipo: 'fiscal' | 'gerente' = 'fiscal'
+): Promise<{ matricula: string; profileId: string } | null> {
+  if (!supabase || !email || !password) return null;
+  try {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanSenha = password.trim();
+    const prefix = tipo === 'gerente' ? 'GER' : 'FSC';
+    const profileId = `${prefix.toLowerCase()}-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+    const nome = cleanEmail.split('@')[0] || (tipo === 'gerente' ? 'Gerente' : 'Fiscal');
+
+    const { data: existing } = await supabase
+      .from('profiles')
+      .select('id, matricula')
+      .eq('id', profileId)
+      .maybeSingle();
+
+    if (existing?.matricula) {
+      await supabase.from('profiles').update({ senha: cleanSenha, tipo }).eq('id', profileId);
+      return { matricula: existing.matricula, profileId };
+    }
+
+    const { data: rows } = await supabase
+      .from('profiles')
+      .select('matricula')
+      .ilike('matricula', `${prefix}-%`);
+
+    const maxCode = (rows || []).reduce((acc: number, row: any) => {
+      const m = (row?.matricula || '').toUpperCase().match(new RegExp(`^${prefix}-(\\d+)$`));
+      if (!m) return acc;
+      return Math.max(acc, Number(m[1]));
+    }, 0);
+
+    const matricula = `${prefix}-${String(maxCode + 1).padStart(3, '0')}`;
+    const payload = {
+      id: profileId,
+      nome,
+      tipo,
+      matricula,
+      senha: cleanSenha,
+      status: 'offline',
+      pontos: 0,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase.from('profiles').upsert(payload);
+    if (error) {
+      addLog(`❌ ensureServerAccessByEmail: ${error.message}`);
+      return null;
+    }
+
+    addLog(`✅ Acesso servidor criado para ${cleanEmail}: ${matricula}`);
+    return { matricula, profileId };
+  } catch (e: any) {
+    addLog(`❌ ensureServerAccessByEmail exceção: ${e?.message || e}`);
+    return null;
+  }
+}
+
 // ============================================
 // MAPPERS
 // ============================================
