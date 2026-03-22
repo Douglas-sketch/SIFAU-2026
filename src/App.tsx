@@ -6,7 +6,7 @@ import FiscalModule from './components/Fiscal';
 import GerenteModule from './components/Gerente';
 import Settings, { AppTheme, applyTheme, applyAccessibility, loadSettings } from './components/Settings';
 import { Lock, ArrowLeft, AlertCircle, ChevronDown, Eye, EyeOff, Mail, Users, LogIn, UserPlus, Loader2 } from 'lucide-react';
-import { supabase } from './lib/supabase';
+import { supabase, getSupabaseConfigStatus } from './lib/supabase';
 import * as supa from './lib/supabaseService';
 import { getProfilePhoto } from './lib/profilePhoto';
 import { requestEssentialPermissions } from './lib/appPermissions';
@@ -109,6 +109,7 @@ function clearSession() {
 }
 
 function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: string, accessType?: AccessType) => void; theme: AppTheme }) {
+  const supabaseStatus = getSupabaseConfigStatus();
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -496,6 +497,13 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
               >
                 <AlertCircle size={16} className="shrink-0" /> {error}
               </motion.div>
+            )}
+
+            {!supabaseStatus.configured && (
+              <div className="bg-amber-500/20 border border-amber-400/30 rounded-xl p-3 text-amber-100 text-xs mb-4">
+                Supabase não configurado neste build. Defina <strong>VITE_SUPABASE_URL</strong> e <strong>VITE_SUPABASE_ANON_KEY</strong> no build
+                ou salve no localStorage as chaves <code>sifau_supabase_url</code> e <code>sifau_supabase_anon_key</code>.
+              </div>
             )}
 
             {/* Success */}

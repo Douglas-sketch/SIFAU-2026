@@ -1,8 +1,25 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Credenciais do Supabase (somente via variáveis de ambiente)
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Credenciais do Supabase
+// 1) Variáveis de ambiente (build-time)
+// 2) Fallback runtime via localStorage (útil para builds já gerados)
+const runtimeUrl = (() => {
+  try {
+    return localStorage.getItem('sifau_supabase_url') || '';
+  } catch {
+    return '';
+  }
+})();
+const runtimeAnonKey = (() => {
+  try {
+    return localStorage.getItem('sifau_supabase_anon_key') || '';
+  } catch {
+    return '';
+  }
+})();
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || runtimeUrl;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || runtimeAnonKey;
 
 let supabase: SupabaseClient | null = null;
 export const diagnosticLog: string[] = [];
@@ -32,7 +49,15 @@ if (SUPABASE_URL && SUPABASE_ANON_KEY) {
     supabase = null;
   }
 } else {
-  addLog('⚠️ Supabase não configurado — defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY. Modo offline ativo.');
+  addLog('⚠️ Supabase não configurado — defina VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY ou salve em localStorage (sifau_supabase_url/sifau_supabase_anon_key). Modo offline ativo.');
 }
 
 export { supabase, addLog };
+
+export function getSupabaseConfigStatus() {
+  return {
+    configured: !!(SUPABASE_URL && SUPABASE_ANON_KEY),
+    url: SUPABASE_URL || '',
+    usingRuntimeFallback: !!(!import.meta.env.VITE_SUPABASE_URL && runtimeUrl),
+  };
+}

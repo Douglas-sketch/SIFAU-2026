@@ -52,6 +52,13 @@ VITE_SUPABASE_ANON_KEY=SEU_ANON_KEY
 - `.env.local` já deve ficar fora do Git.
 - Nunca commitar keys reais.
 
+Fallback runtime (se o build já foi gerado sem env):
+```js
+localStorage.setItem('sifau_supabase_url', 'https://SEU-PROJETO.supabase.co');
+localStorage.setItem('sifau_supabase_anon_key', 'SEU_ANON_KEY');
+location.reload();
+```
+
 ## 7) Testar localmente
 ```bash
 npm install
