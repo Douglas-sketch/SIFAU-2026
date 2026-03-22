@@ -599,8 +599,17 @@ export async function userAccountExists(email: string): Promise<boolean> {
       .eq('email', email.toLowerCase())
       .limit(1)
       .maybeSingle();
-    if (error) return false;
-    return !!data;
+    if (!error && data) return true;
+
+    const { data: appUser, error: appErr } = await supabase
+      .from('app_users')
+      .select('email')
+      .eq('email', email.toLowerCase())
+      .limit(1)
+      .maybeSingle();
+
+    if (appErr) return false;
+    return !!appUser;
   } catch {
     return false;
   }
@@ -619,8 +628,20 @@ export async function checkUserAccountCredentials(
       .limit(1)
       .maybeSingle();
 
-    if (error || !data) return 'not_found';
-    if ((data.senha || '') !== password) return 'wrong_password';
+    if (!error && data) {
+      if ((data.senha || '') !== password) return 'wrong_password';
+      return 'ok';
+    }
+
+    const { data: appData, error: appError } = await supabase
+      .from('app_users')
+      .select('email, senha_legacy')
+      .eq('email', email.toLowerCase())
+      .limit(1)
+      .maybeSingle();
+
+    if (appError || !appData) return 'not_found';
+    if ((appData.senha_legacy || '') !== password) return 'wrong_password';
     return 'ok';
   } catch {
     return 'not_found';

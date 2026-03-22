@@ -182,7 +182,11 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         return;
       }
 
-      setError(result === 'wrong_password' ? 'Senha incorreta. Tente novamente.' : 'Conta não encontrada neste dispositivo. Conecte à internet para validar sua conta.');
+      setError(
+        result === 'wrong_password'
+          ? 'Senha incorreta. Tente novamente.'
+          : 'Conta não encontrada localmente. Se ela existe no Supabase, verifique VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.'
+      );
     } catch {
       setError('Erro ao conectar. Tente novamente.');
     } finally {
