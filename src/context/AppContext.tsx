@@ -65,6 +65,7 @@ function getDeviceId(): string {
 }
 
 const DEVICE_ID = getDeviceId();
+const SERVER_SESSION_KEY = 'sifau_server_session_v1';
 
 // Auth email for per-account storage — reads from the same key as App.tsx saves to
 function getAuthEmail(): string {
@@ -168,6 +169,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const currentUserRef = useRef<Profile | null>(null);
 
   useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
+
+  // Restaurar sessão de servidor (fiscal/gerente) para não voltar ao login técnico ao reabrir
+  useEffect(() => {
+    if (currentUser) return;
+    try {
+      const raw = localStorage.getItem(SERVER_SESSION_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { userId?: string };
+      if (!parsed?.userId) return;
+      const user = profiles.find(p => p.id === parsed.userId);
+      if (user && (user.tipo === 'fiscal' || user.tipo === 'gerente')) {
+        setCurrentUser({ ...user, status_online: 'online' as const });
+      }
+    } catch { /* */ }
+  }, [profiles, currentUser]);
 
   // ═══ AUTO-OFFLINE ═══
   useEffect(() => {
@@ -528,6 +544,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return [...prev, user];
       });
       setCurrentUser(user);
+      try { localStorage.setItem(SERVER_SESSION_KEY, JSON.stringify({ userId: user.id, ts: Date.now() })); } catch { /* */ }
       return user;
     }
 
@@ -543,6 +560,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return [...prev, user];
           });
           setCurrentUser(user);
+          try { localStorage.setItem(SERVER_SESSION_KEY, JSON.stringify({ userId: user.id, ts: Date.now() })); } catch { /* */ }
           return user;
         }
       } catch (e) {
@@ -563,6 +581,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     channelsRef.current.forEach(ch => supa.unsubscribe(ch));
     channelsRef.current = [];
     setCurrentUser(null);
+    try { localStorage.removeItem(SERVER_SESSION_KEY); } catch { /* */ }
   }, [currentUser]);
 
   // ═══ DENÚNCIAS ═══
