@@ -74,11 +74,25 @@ Como você já exportou, execute nesta ordem:
    - `legacy_user_accounts`
    - `legacy_profiles`
    - `legacy_denuncias`
+   - (opcional) crie essas tabelas automaticamente com `sql/create_legacy_staging_tables.sql`
 4. Rode `sql/migrate_legacy_exports_to_v2.sql`.
 5. Confira as contagens no final do script.
 6. Atualize as envs do app para o novo projeto:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
+
+### Comandos SQL (ordem exata)
+
+```sql
+-- 1) Schema novo completo (inclui app_users, user_accounts, profiles, denuncias, relatorios, autos, historico, mensagens, fotos)
+-- Cole e execute o conteúdo de: supabase-schema-v2.sql
+
+-- 2) Criação das tabelas staging para import dos CSVs antigos
+-- Cole e execute o conteúdo de: sql/create_legacy_staging_tables.sql
+
+-- 3) Após importar os CSVs em legacy_*, execute a migração
+-- Cole e execute o conteúdo de: sql/migrate_legacy_exports_to_v2.sql
+```
 
 ## 7) Preciso criar projeto novo mesmo?
 

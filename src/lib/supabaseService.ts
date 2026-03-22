@@ -709,6 +709,47 @@ export async function ensureServerAccessByEmail(
   }
 }
 
+export async function listRegisteredAccounts(): Promise<Array<{
+  email: string;
+  provider?: string;
+  access_type?: string;
+  server_type?: string | null;
+}>> {
+  if (!supabase) return [];
+  try {
+    const { data: uaData, error: uaError } = await supabase
+      .from('user_accounts')
+      .select('email, provider, access_type, server_type')
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (!uaError && Array.isArray(uaData) && uaData.length > 0) {
+      return uaData.map((r: any) => ({
+        email: r.email,
+        provider: r.provider,
+        access_type: r.access_type,
+        server_type: r.server_type,
+      }));
+    }
+
+    const { data: appData, error: appError } = await supabase
+      .from('app_users')
+      .select('email, provider, access_type, server_type')
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (appError || !Array.isArray(appData)) return [];
+    return appData.map((r: any) => ({
+      email: r.email,
+      provider: r.provider,
+      access_type: r.access_type,
+      server_type: r.server_type,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 // ============================================
 // MAPPERS
 // ============================================

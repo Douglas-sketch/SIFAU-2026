@@ -125,6 +125,68 @@ create index idx_den_status on denuncias(status);
 create index idx_den_email on denuncias(auth_email);
 create index idx_den_fiscal on denuncias(fiscal_id);
 
+drop table if exists relatorios cascade;
+create table relatorios (
+  id text primary key,
+  denuncia_id text not null references denuncias(id) on delete cascade,
+  fiscal_id text references profiles(id),
+  texto text,
+  assinatura_base64 text,
+  dados_extras jsonb default '{}'::jsonb,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create index idx_rel_denuncia on relatorios(denuncia_id);
+
+drop table if exists autos_infracao cascade;
+create table autos_infracao (
+  id text primary key,
+  denuncia_id text not null references denuncias(id) on delete cascade,
+  fiscal_id text references profiles(id),
+  valor numeric(12,2) default 0,
+  tipo text,
+  embargo boolean default false,
+  created_at timestamptz default now()
+);
+create index idx_auto_denuncia on autos_infracao(denuncia_id);
+
+drop table if exists historico_atividades cascade;
+create table historico_atividades (
+  id text primary key,
+  fiscal_id text references profiles(id),
+  denuncia_id text references denuncias(id) on delete set null,
+  tipo text,
+  descricao text,
+  pontos integer default 0,
+  created_at timestamptz default now()
+);
+create index idx_hist_fiscal on historico_atividades(fiscal_id);
+
+drop table if exists mensagens cascade;
+create table mensagens (
+  id text primary key,
+  de_id text references profiles(id),
+  para_id text references profiles(id),
+  de_nome text,
+  para_nome text,
+  texto text not null,
+  lida boolean default false,
+  denuncia_id text references denuncias(id) on delete set null,
+  created_at timestamptz default now()
+);
+create index idx_msg_de on mensagens(de_id);
+create index idx_msg_para on mensagens(para_id);
+
+drop table if exists fotos cascade;
+create table fotos (
+  id text primary key,
+  denuncia_id text not null references denuncias(id) on delete cascade,
+  base64 text not null,
+  tipo text default 'denuncia',
+  created_at timestamptz default now()
+);
+create index idx_fotos_denuncia on fotos(denuncia_id);
+
 -- ============================================
 -- 5) RLS base (aberta para manter comportamento atual do app)
 -- ============================================
@@ -132,8 +194,18 @@ alter table app_users enable row level security;
 alter table user_accounts enable row level security;
 alter table profiles enable row level security;
 alter table denuncias enable row level security;
+alter table relatorios enable row level security;
+alter table autos_infracao enable row level security;
+alter table historico_atividades enable row level security;
+alter table mensagens enable row level security;
+alter table fotos enable row level security;
 
 create policy "allow_all_app_users" on app_users for all using (true) with check (true);
 create policy "allow_all_user_accounts" on user_accounts for all using (true) with check (true);
 create policy "allow_all_profiles" on profiles for all using (true) with check (true);
 create policy "allow_all_denuncias" on denuncias for all using (true) with check (true);
+create policy "allow_all_relatorios" on relatorios for all using (true) with check (true);
+create policy "allow_all_autos" on autos_infracao for all using (true) with check (true);
+create policy "allow_all_historico" on historico_atividades for all using (true) with check (true);
+create policy "allow_all_mensagens" on mensagens for all using (true) with check (true);
+create policy "allow_all_fotos" on fotos for all using (true) with check (true);

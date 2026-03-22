@@ -120,6 +120,8 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const [serverType, setServerType] = useState<'fiscal' | 'gerente'>('fiscal');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [registeredAccounts, setRegisteredAccounts] = useState<Array<{ email: string; provider?: string; access_type?: string; server_type?: string | null }>>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
 
   const finishAuth = (userEmail: string, provider: string = 'email', userPassword?: string, profileType?: AccessType) => {
     const cleanEmail = userEmail.toLowerCase().trim();
@@ -407,6 +409,21 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
     }
   };
 
+  const handleLoadRegisteredAccounts = async () => {
+    setLoadingAccounts(true);
+    try {
+      const rows = await supa.listRegisteredAccounts();
+      setRegisteredAccounts(rows);
+      if (!rows.length) {
+        setError('Nenhuma conta encontrada em user_accounts/app_users neste projeto.');
+      } else {
+        setError('');
+      }
+    } finally {
+      setLoadingAccounts(false);
+    }
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -628,6 +645,28 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                 <div className="flex-1 h-px bg-white/10"></div>
                 <span className="text-white/30 text-xs">ou</span>
                 <div className="flex-1 h-px bg-white/10"></div>
+              </div>
+            )}
+
+            {/* Debug: listar contas existentes no banco para teste */}
+            {mode === 'login' && (
+              <div className="mt-3">
+                <button
+                  onClick={handleLoadRegisteredAccounts}
+                  disabled={loadingAccounts}
+                  className="w-full bg-white/5 hover:bg-white/10 border border-white/15 text-white/80 rounded-xl py-2 text-xs transition"
+                >
+                  {loadingAccounts ? 'Carregando contas do banco...' : 'Ver contas cadastradas neste projeto (teste)'}
+                </button>
+                {registeredAccounts.length > 0 && (
+                  <div className="mt-2 max-h-32 overflow-auto rounded-xl border border-white/10 bg-black/20 p-2 space-y-1">
+                    {registeredAccounts.map((acc, idx) => (
+                      <div key={`${acc.email}-${idx}`} className="text-[11px] text-blue-100">
+                        <strong>{acc.email}</strong> • {acc.access_type || 'n/d'}{acc.server_type ? `/${acc.server_type}` : ''} • {acc.provider || 'email'}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
