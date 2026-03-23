@@ -36,6 +36,8 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const [serverType, setServerType] = useState<'fiscal' | 'gerente'>('fiscal');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [registeredAccounts, setRegisteredAccounts] = useState<Array<{ email: string; provider?: string; access_type?: string; server_type?: string | null }>>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
 
   const finishAuth = (userEmail: string, provider: string = 'email', userPassword?: string, profileType?: AccessType) => {
     const cleanEmail = userEmail.toLowerCase().trim();
@@ -187,6 +189,21 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
       setError(e?.message || 'Erro ao enviar e-mail de recuperação.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLoadRegisteredAccounts = async () => {
+    setLoadingAccounts(true);
+    try {
+      const rows = await supa.listRegisteredAccounts();
+      setRegisteredAccounts(rows);
+      if (!rows.length) {
+        setError('Nenhuma conta encontrada em user_accounts/app_users neste projeto.');
+      } else {
+        setError('');
+      }
+    } finally {
+      setLoadingAccounts(false);
     }
   };
 
