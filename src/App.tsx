@@ -59,6 +59,14 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
 
     try {
       if (supabase) {
+        // 1) Login principal via tabela do app (Supabase DB), sem depender de confirmação de e-mail do Auth
+        const legacyStatus = await supa.checkUserAccountCredentials(e, p);
+        if (legacyStatus === 'ok') {
+          finishAuth(e, 'email', undefined, 'denunciante');
+          return;
+        }
+
+        // 2) Compatibilidade: contas que existem apenas no Supabase Auth
         const { error: authError } = await supabase.auth.signInWithPassword({ email: e, password: p });
         if (!authError) {
           finishAuth(e, 'email', undefined, 'denunciante');
@@ -67,12 +75,6 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
 
         const msg = (authError.message || '').toLowerCase();
         if (msg.includes('invalid login credentials')) {
-          // Fallback para contas legadas salvas em user_accounts (sem Supabase Auth)
-          const legacyStatus = await supa.checkUserAccountCredentials(e, p);
-          if (legacyStatus === 'ok') {
-            finishAuth(e, 'email', undefined, 'denunciante');
-            return;
-          }
           setError(
             legacyStatus === 'wrong_password'
               ? 'Senha incorreta. Verifique e tente novamente.'
@@ -81,12 +83,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           return;
         }
         if (msg.includes('email not confirmed')) {
-          const legacyStatus = await supa.checkUserAccountCredentials(e, p);
-          if (legacyStatus === 'ok') {
-            finishAuth(e, 'email', undefined, 'denunciante');
-            return;
-          }
-          setError('Não foi possível autenticar no Supabase Auth agora. Verifique as credenciais e tente novamente.');
+          setError('Conta encontrada, mas o Supabase Auth está exigindo confirmação. Para este app, entre com a senha cadastrada em user_accounts.');
           return;
         }
 
@@ -126,23 +123,8 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           setError('Este e-mail já está cadastrado. Faça login.');
           return;
         }
-
-        const { data, error: signUpError } = await supabase.auth.signUp({
-          email: e,
-          password: p,
-          options: { data: { app: 'sifau' } },
-        });
-
-        if (signUpError) {
-          const msg = (signUpError.message || '').toLowerCase();
-          if (msg.includes('already registered') || msg.includes('already exists')) {
-            setError('Este e-mail já está cadastrado. Faça login.');
-            return;
-          }
-          setError('Não foi possível criar a conta agora. Tente novamente.');
-          return;
-        }
-
+        
+        // Cadastro direto no banco do app (user_accounts/app_users), sem exigir confirmação do Auth
         await supa.registerUserAccount(e, 'email', p);
         let serverMsg = '';
         if (accessType === 'servidor') {
