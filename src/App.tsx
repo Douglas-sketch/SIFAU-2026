@@ -18,95 +18,11 @@ const THEME_GRADIENTS: Record<AppTheme, string> = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-//  SISTEMA DE CONTAS — 100% Local-first + Supabase backup
+//  SISTEMA DE CONTAS — Supabase-first
 // ═══════════════════════════════════════════════════════════════
-const ACCOUNTS_DB = 'sifau_accounts_v3';
-const AUTH_SESSION = 'sifau_session_v3';
-const AUTH_EMAIL_KEY = 'sifau_auth_email';
-const AUTH_ACCESS_KEY = 'sifau_auth_access';
 type AccessType = 'denunciante' | 'servidor';
 
-// Migrar contas da v2 para v3 (para não perder contas já criadas)
-function migrateAccounts() {
-  try {
-    const v2 = localStorage.getItem('sifau_accounts_v2');
-    const v3 = localStorage.getItem(ACCOUNTS_DB);
-    if (v2 && !v3) {
-      localStorage.setItem(ACCOUNTS_DB, v2);
-      console.log('📦 Contas migradas v2→v3');
-    }
-    const s2 = localStorage.getItem('sifau_session_v2');
-    const s3 = localStorage.getItem(AUTH_SESSION);
-    if (s2 && !s3) {
-      localStorage.setItem(AUTH_SESSION, s2);
-      console.log('📦 Sessão migrada v2→v3');
-    }
-  } catch { /* */ }
-}
-migrateAccounts();
-
-function loadAccounts(): Record<string, { email: string; password: string; createdAt: string; accessType?: AccessType }> {
-  try {
-    const raw = JSON.parse(localStorage.getItem(ACCOUNTS_DB) || '{}') as Record<string, { email: string; password: string; createdAt: string; accessType?: AccessType }>;
-    const migrated: Record<string, { email: string; password: string; createdAt: string; accessType?: AccessType }> = {};
-    Object.entries(raw).forEach(([key, value]) => {
-      migrated[key] = { ...value, accessType: value.accessType || 'denunciante' };
-    });
-    return migrated;
-  } catch { return {}; }
-}
-
-function saveAccount(email: string, password: string, accessType: AccessType = 'denunciante') {
-  const db = loadAccounts();
-  db[email.toLowerCase().trim()] = { 
-    email: email.toLowerCase().trim(), 
-    password, 
-    createdAt: new Date().toISOString(),
-    accessType,
-  };
-  localStorage.setItem(ACCOUNTS_DB, JSON.stringify(db));
-  console.log('💾 Conta salva localmente:', email);
-}
-
-function checkAccount(email: string, password: string): 'ok' | 'wrong_password' | 'not_found' {
-  const db = loadAccounts();
-  const acc = db[email.toLowerCase().trim()];
-  if (!acc) return 'not_found';
-  if (acc.password !== password) return 'wrong_password';
-  return 'ok';
-}
-
-function accountExistsLocal(email: string): boolean {
-  const db = loadAccounts();
-  return !!db[email.toLowerCase().trim()];
-}
-
-function getAccountAccessType(email: string): AccessType {
-  const db = loadAccounts();
-  return db[email.toLowerCase().trim()]?.accessType || 'denunciante';
-}
-
-function saveSession(email: string, accessType: AccessType = 'denunciante') {
-  localStorage.setItem(AUTH_SESSION, JSON.stringify({ email, accessType, ts: Date.now() }));
-  // CRITICAL: Also save to AUTH_EMAIL_KEY so AppContext can read it
-  localStorage.setItem(AUTH_EMAIL_KEY, email.toLowerCase().trim());
-  localStorage.setItem(AUTH_ACCESS_KEY, accessType);
-}
-
-function getSession(): { email: string; accessType: AccessType } | null {
-  try {
-    const s = JSON.parse(localStorage.getItem(AUTH_SESSION) || 'null');
-    if (!s?.email) return null;
-    return { email: s.email, accessType: s.accessType || 'denunciante' };
-  } catch { return null; }
-}
-
-function clearSession() {
-  localStorage.removeItem(AUTH_SESSION);
-  localStorage.removeItem(AUTH_EMAIL_KEY);
-  localStorage.removeItem(AUTH_ACCESS_KEY);
-  // DON'T remove ACCOUNTS_DB — keep saved accounts
-}
+function clearSession() {}
 
 function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: string, accessType?: AccessType) => void; theme: AppTheme }) {
   const supabaseStatus = getSupabaseConfigStatus();
@@ -125,8 +41,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
 
   const finishAuth = (userEmail: string, provider: string = 'email', userPassword?: string, profileType?: AccessType) => {
     const cleanEmail = userEmail.toLowerCase().trim();
-    const resolvedType = profileType || getAccountAccessType(cleanEmail);
-    saveSession(cleanEmail, resolvedType);
+    const resolvedType = profileType || 'denunciante';
     supa.registerUserAccount(cleanEmail, provider, userPassword).catch(() => {});
     console.log('✅ Auth completo:', cleanEmail);
     onAuthenticated(cleanEmail, resolvedType);
@@ -146,9 +61,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
       if (supabase) {
         const { error: authError } = await supabase.auth.signInWithPassword({ email: e, password: p });
         if (!authError) {
-          const role = getAccountAccessType(e);
-          saveAccount(e, p, role);
-          finishAuth(e, 'email', undefined, role);
+          finishAuth(e, 'email', undefined, 'denunciante');
           return;
         }
 
@@ -157,9 +70,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           // Fallback para contas legadas salvas em user_accounts (sem Supabase Auth)
           const legacyStatus = await supa.checkUserAccountCredentials(e, p);
           if (legacyStatus === 'ok') {
-            const role = getAccountAccessType(e);
-            saveAccount(e, p, role);
-            finishAuth(e, 'email', undefined, role);
+            finishAuth(e, 'email', undefined, 'denunciante');
             return;
           }
           setError(
@@ -170,30 +81,19 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           return;
         }
         if (msg.includes('email not confirmed')) {
-          const localStatus = checkAccount(e, p);
-          if (localStatus === 'ok') {
-            finishAuth(e, 'email', undefined, getAccountAccessType(e));
+          const legacyStatus = await supa.checkUserAccountCredentials(e, p);
+          if (legacyStatus === 'ok') {
+            finishAuth(e, 'email', undefined, 'denunciante');
             return;
           }
-          setError('Sua conta foi criada, mas o provedor exige confirmação de e-mail. Acesse com a conta local ou peça para desativar confirmação no Supabase.');
+          setError('Não foi possível autenticar no Supabase Auth agora. Verifique as credenciais e tente novamente.');
           return;
         }
 
         setError('Não foi possível entrar agora. Tente novamente em instantes.');
         return;
       }
-
-      const result = checkAccount(e, p);
-      if (result === 'ok') {
-        finishAuth(e, 'email', undefined, getAccountAccessType(e));
-        return;
-      }
-
-      setError(
-        result === 'wrong_password'
-          ? 'Senha incorreta. Tente novamente.'
-          : 'Conta não encontrada localmente. Se ela existe no Supabase, verifique VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.'
-      );
+      setError('Supabase não configurado para autenticação.');
     } catch {
       setError('Erro ao conectar. Tente novamente.');
     } finally {
@@ -243,7 +143,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           return;
         }
 
-        saveAccount(e, p, accessType);
+        await supa.registerUserAccount(e, 'email', p);
         let serverMsg = '';
         if (accessType === 'servidor') {
           const created = await supa.ensureServerAccessByEmail(e, p, serverType);
@@ -255,19 +155,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         if (serverMsg) setSuccess(`Conta de servidor criada com sucesso!${serverMsg}`);
         return;
       }
-
-      if (accountExistsLocal(e)) {
-        setError('Este e-mail já está cadastrado neste dispositivo. Faça login.');
-        return;
-      }
-      saveAccount(e, p, accessType);
-      if (accessType === 'servidor') {
-        const created = await supa.ensureServerAccessByEmail(e, p, serverType);
-        if (created?.matricula) {
-          setSuccess(`Conta de servidor criada! Matrícula única: ${created.matricula}`);
-        }
-      }
-      finishAuth(e, 'email', undefined, accessType);
+      setError('Supabase não configurado para cadastro.');
     } catch (_error) {
       setError('Erro ao criar conta. Tente novamente.');
     } finally {
@@ -295,12 +183,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           setTimeout(() => { setMode('login'); setSuccess(''); }, 4000);
         }
       } else {
-        // Verificar se existe localmente
-        if (accountExistsLocal(trimmedEmail)) {
-          setSuccess('Modo offline. Sua conta existe localmente. Tente lembrar a senha ou contate o administrador.');
-        } else {
-          setError('Conta não encontrada.');
-        }
+        setError('Recuperação de senha indisponível sem Supabase.');
       }
     } catch (e: any) {
       setError(e?.message || 'Erro ao enviar e-mail de recuperação.');
@@ -1067,7 +950,7 @@ function HomeScreen({ onLogin, onCidadao, onOpenSettings, onLogoutAuth, theme, c
 function AppContent() {
   const { currentUser, logout, setAuthEmail, authEmail } = useApp();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null); // null = checking
-  const [accessType, setAccessType] = useState<AccessType>(() => (localStorage.getItem(AUTH_ACCESS_KEY) as AccessType) || 'denunciante');
+  const [accessType, setAccessType] = useState<AccessType>('denunciante');
   const [homeError, setHomeError] = useState('');
   const [screen, setScreen] = useState<'home' | 'login' | 'cidadao'>(() => {
     // Restaurar tela salva para não voltar à home
@@ -1089,52 +972,35 @@ function AppContent() {
     if (settings.theme) setTheme(settings.theme);
 
     async function checkAuth() {
-      // 1. Verificar sessão local salva
-      const savedSession = getSession();
-      if (savedSession?.email) {
-        console.log('🔄 Sessão restaurada:', savedSession.email);
-        setAuthEmail(savedSession.email);
-        setAccessType(savedSession.accessType);
-        supa.registerUserAccount(savedSession.email, 'session').catch(() => {});
-        setIsAuthenticated(true);
-        return;
-      }
-      
-      // 2. Verificar sessão Supabase Auth (Google OAuth redirect)
+      // Verificar sessão Supabase Auth
       if (supabase) {
         try {
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.user?.email) {
             const sessionEmail = session.user.email;
             console.log('🔄 Sessão Supabase restaurada:', sessionEmail);
-            const role = getAccountAccessType(sessionEmail);
-            saveSession(sessionEmail, role);
             setAuthEmail(sessionEmail);
-            setAccessType(role);
-            supa.registerUserAccount(sessionEmail, 'google').catch(() => {});
+            setAccessType('denunciante');
+            supa.registerUserAccount(sessionEmail, 'session').catch(() => {});
             setIsAuthenticated(true);
             return;
           }
         } catch { /* continue */ }
       }
       
-      // 3. Nenhuma sessão encontrada
       setIsAuthenticated(false);
     }
 
     checkAuth();
 
-    // Listen for auth state changes (Google OAuth redirect)
+    // Listen for auth state changes
     if (supabase) {
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         if (session?.user?.email) {
           const sessionEmail = session.user.email;
           setAuthEmail(sessionEmail);
-          const role = getAccountAccessType(sessionEmail);
-          saveSession(sessionEmail, role);
-          saveAccount(sessionEmail, 'google-auth', role);
-          setAccessType(role);
-          supa.registerUserAccount(sessionEmail, session.user?.app_metadata?.provider || 'google').catch(() => {});
+          setAccessType('denunciante');
+          supa.registerUserAccount(sessionEmail, session.user?.app_metadata?.provider || 'email').catch(() => {});
           setIsAuthenticated(true);
         }
       });
@@ -1228,7 +1094,6 @@ function AppContent() {
     if (supabase) {
       try { await supabase.auth.signOut(); } catch { /* ignore */ }
     }
-    // Remover sessão ativa mas NÃO as credenciais salvas (sifau_accounts_v2)
     clearSession();
     sessionStorage.removeItem('sifau_screen');
     setIsAuthenticated(false);

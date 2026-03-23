@@ -151,9 +151,9 @@ const AppContext = createContext<AppState>({} as AppState);
 export const useApp = () => useContext(AppContext);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const initialEmail = getAuthEmail();
-  const stored = loadFromStorage(initialEmail);
-  const initialProfiles = resetAllStatusesToOffline(ensureAllProfiles(stored?.profiles || mockProfiles));
+  const initialEmail = 'anonymous';
+  const stored = null;
+  const initialProfiles = resetAllStatusesToOffline(ensureAllProfiles(mockProfiles));
   const [profiles, setProfiles] = useState<Profile[]>(initialProfiles);
   const [denuncias, setDenuncias] = useState<Denuncia[]>(stored?.denuncias?.length ? stored.denuncias : mockDenuncias);
   const [relatorios, setRelatorios] = useState<Relatorio[]>(stored?.relatorios || mockRelatorios);
@@ -283,10 +283,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => { cancelled = true; };
   }, []);
 
-  // ═══ PERSIST ═══
-  useEffect(() => {
-    saveToStorage({ profiles, denuncias, relatorios, autos, historico, mensagens }, authEmail);
-  }, [profiles, denuncias, relatorios, autos, historico, mensagens, authEmail]);
+  // Persistência local desativada (Supabase-first)
 
   // ═══ RECALCULAR PONTOS DOS FISCAIS (SOMA TOTAL DO HISTÓRICO) ═══
   useEffect(() => {
@@ -412,22 +409,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.id, isOnline]);
-
-  // ═══ OFFLINE POLLING ═══
-  useEffect(() => {
-    if (isOnline) return;
-    const interval = setInterval(() => {
-      const fresh = loadFromStorage(authEmail);
-      if (fresh) {
-        setMensagens(prev => { const s = JSON.stringify(fresh.mensagens); return s !== JSON.stringify(prev) ? fresh.mensagens : prev; });
-        setDenuncias(prev => { const s = JSON.stringify(fresh.denuncias); return s !== JSON.stringify(prev) ? fresh.denuncias : prev; });
-        setRelatorios(prev => { const s = JSON.stringify(fresh.relatorios); return s !== JSON.stringify(prev) ? fresh.relatorios : prev; });
-        setAutos(prev => { const s = JSON.stringify(fresh.autos); return s !== JSON.stringify(prev) ? fresh.autos : prev; });
-        setHistorico(prev => { const s = JSON.stringify(fresh.historico); return s !== JSON.stringify(prev) ? fresh.historico : prev; });
-      }
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [isOnline]);
 
   const addNotification = useCallback((message: string, type: Notification['type']) => {
     const n: Notification = { id: `notif-${Date.now()}-${Math.random()}`, message, type, timestamp: new Date().toISOString() };
@@ -877,39 +858,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const setAuthEmail = useCallback((email: string) => {
     const clean = email.toLowerCase().replace(/[^a-z0-9@._-]/g, '') || 'anonymous';
-    const oldEmail = authEmail;
     setAuthEmailState(clean);
-    
-    // CRITICAL: Save to localStorage so getAuthEmail() can find it on next load
-    localStorage.setItem('sifau_auth_email', clean);
-    
-    // If email changed, load that email's data
-    if (clean !== oldEmail && clean !== 'anonymous') {
-      console.log(`📧 Email mudou: ${oldEmail} → ${clean}. Carregando dados...`);
-      const emailData = loadFromStorage(clean);
-      if (emailData) {
-        setProfiles(emailData.profiles);
-        setDenuncias(emailData.denuncias);
-        setRelatorios(emailData.relatorios);
-        setAutos(emailData.autos);
-        setHistorico(emailData.historico);
-        setMensagens(emailData.mensagens);
-      } else {
-        // New email — start fresh (keep profiles, clear everything else)
-        console.log(`🆕 Novo email: ${clean}. Iniciando dados limpos.`);
-        setDenuncias([]);
-        setRelatorios([]);
-        setAutos([]);
-        setHistorico([]);
-        setMensagens([]);
-      }
-    }
-    
+
     // Register in Supabase user_accounts
     if (isOnline) {
       supa.registerUserAccount(clean, 'email');
     }
-  }, [isOnline, authEmail]);
+  }, [isOnline]);
 
 
 
