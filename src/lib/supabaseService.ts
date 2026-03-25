@@ -525,7 +525,12 @@ export async function deleteUserAccount(email: string): Promise<boolean> {
   }
 }
 
-export async function registerUserAccount(email: string, provider: string = 'email', password?: string): Promise<void> {
+export async function registerUserAccount(
+  email: string,
+  provider: string = 'email',
+  password?: string,
+  opts?: { accessType?: 'denunciante' | 'servidor'; serverType?: 'fiscal' | 'gerente' | null }
+): Promise<void> {
   // NÃO depende de ok() — tenta SEMPRE salvar no Supabase diretamente
   if (!supabase || !email || email === 'anonymous') {
     addLog(`⚠️ registerUserAccount: sem supabase ou email inválido (${email})`);
@@ -543,6 +548,8 @@ export async function registerUserAccount(email: string, provider: string = 'ema
       dispositivo: navigator.userAgent.substring(0, 100),
     };
     if (provider === 'email' && password) payload.senha = password;
+    if (opts?.accessType) payload.access_type = opts.accessType;
+    if (opts?.serverType !== undefined) payload.server_type = opts.serverType;
 
     const { error } = await supabase
       .from('user_accounts')
@@ -558,6 +565,8 @@ export async function registerUserAccount(email: string, provider: string = 'ema
         dispositivo: navigator.userAgent.substring(0, 100),
       };
       if (provider === 'email' && password) insertPayload.senha = password;
+      if (opts?.accessType) insertPayload.access_type = opts.accessType;
+      if (opts?.serverType !== undefined) insertPayload.server_type = opts.serverType;
 
       const { error: insertError } = await supabase
         .from('user_accounts')
@@ -570,6 +579,8 @@ export async function registerUserAccount(email: string, provider: string = 'ema
             dispositivo: navigator.userAgent.substring(0, 100),
           };
           if (provider === 'email' && password) updatePayload.senha = password;
+          if (opts?.accessType) updatePayload.access_type = opts.accessType;
+          if (opts?.serverType !== undefined) updatePayload.server_type = opts.serverType;
 
           await supabase
             .from('user_accounts')
@@ -587,6 +598,49 @@ export async function registerUserAccount(email: string, provider: string = 'ema
     }
   } catch (e: any) {
     addLog(`❌ Exceção registrar conta: ${e?.message}`);
+  }
+}
+
+export async function getAccountAccessByEmail(email: string): Promise<{ accessType: 'denunciante' | 'servidor'; serverType: 'fiscal' | 'gerente' | null }> {
+  if (!supabase || !email) return { accessType: 'denunciante', serverType: null };
+  const cleanEmail = email.trim().toLowerCase();
+  try {
+    const { data: ua } = await supabase
+      .from('user_accounts')
+      .select('access_type, server_type')
+      .eq('email', cleanEmail)
+      .limit(1)
+      .maybeSingle();
+
+    if (ua?.access_type === 'servidor') {
+      return { accessType: 'servidor', serverType: (ua.server_type as 'fiscal' | 'gerente' | null) || null };
+    }
+
+    const { data: appUser } = await supabase
+      .from('app_users')
+      .select('access_type, server_type')
+      .eq('email', cleanEmail)
+      .limit(1)
+      .maybeSingle();
+
+    if (appUser?.access_type === 'servidor') {
+      return { accessType: 'servidor', serverType: (appUser.server_type as 'fiscal' | 'gerente' | null) || null };
+    }
+
+    const fiscalId = `fsc-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+    const gerenteId = `ger-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+    const { data: prof } = await supabase
+      .from('profiles')
+      .select('tipo')
+      .in('id', [fiscalId, gerenteId])
+      .limit(1);
+
+    const serverTipo = (prof || []).find((p: any) => p?.tipo === 'fiscal' || p?.tipo === 'gerente')?.tipo;
+    if (serverTipo) return { accessType: 'servidor', serverType: serverTipo };
+
+    return { accessType: 'denunciante', serverType: null };
+  } catch {
+    return { accessType: 'denunciante', serverType: null };
   }
 }
 

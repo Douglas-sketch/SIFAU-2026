@@ -5,7 +5,7 @@ import CidadaoModule from './components/Cidadao';
 import FiscalModule from './components/Fiscal';
 import GerenteModule from './components/Gerente';
 import Settings, { AppTheme, applyTheme, applyAccessibility, loadSettings } from './components/Settings';
-import { Lock, ArrowLeft, AlertCircle, ChevronDown, Eye, EyeOff, Mail, Users, LogIn, UserPlus, Loader2 } from 'lucide-react';
+import { Lock, ArrowLeft, AlertCircle, ChevronDown, Eye, EyeOff, Mail, Users, LogIn, UserPlus, Loader2, BadgeCheck } from 'lucide-react';
 import { supabase, getSupabaseConfigStatus } from './lib/supabase';
 import * as supa from './lib/supabaseService';
 import { getProfilePhoto } from './lib/profilePhoto';
@@ -36,13 +36,12 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const [serverType, setServerType] = useState<'fiscal' | 'gerente'>('fiscal');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [registeredAccounts, setRegisteredAccounts] = useState<Array<{ email: string; provider?: string; access_type?: string; server_type?: string | null }>>([]);
-  const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [generatedMatricula, setGeneratedMatricula] = useState<string | null>(null);
+  const [pendingServerAuth, setPendingServerAuth] = useState<{ email: string; role: AccessType } | null>(null);
 
-  const finishAuth = (userEmail: string, provider: string = 'email', userPassword?: string, profileType?: AccessType) => {
+  const finishAuth = (userEmail: string, _provider: string = 'email', _userPassword?: string, profileType?: AccessType) => {
     const cleanEmail = userEmail.toLowerCase().trim();
     const resolvedType = profileType || 'denunciante';
-    supa.registerUserAccount(cleanEmail, provider, userPassword).catch(() => {});
     console.log('✅ Auth completo:', cleanEmail);
     onAuthenticated(cleanEmail, resolvedType);
   };
@@ -62,14 +61,24 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         // 1) Login principal via tabela do app (Supabase DB), sem depender de confirmação de e-mail do Auth
         const legacyStatus = await supa.checkUserAccountCredentials(e, p);
         if (legacyStatus === 'ok') {
-          finishAuth(e, 'email', undefined, 'denunciante');
+          const roleInfo = await supa.getAccountAccessByEmail(e);
+          finishAuth(e, 'email', undefined, roleInfo.accessType);
+          await supa.registerUserAccount(e, 'email', undefined, {
+            accessType: roleInfo.accessType,
+            serverType: roleInfo.serverType,
+          });
           return;
         }
 
         // 2) Compatibilidade: contas que existem apenas no Supabase Auth
         const { error: authError } = await supabase.auth.signInWithPassword({ email: e, password: p });
         if (!authError) {
-          finishAuth(e, 'email', undefined, 'denunciante');
+          const roleInfo = await supa.getAccountAccessByEmail(e);
+          finishAuth(e, 'email', undefined, roleInfo.accessType);
+          await supa.registerUserAccount(e, 'email', undefined, {
+            accessType: roleInfo.accessType,
+            serverType: roleInfo.serverType,
+          });
           return;
         }
 
@@ -125,16 +134,29 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         }
         
         // Cadastro direto no banco do app (user_accounts/app_users), sem exigir confirmação do Auth
-        await supa.registerUserAccount(e, 'email', p);
+        await supa.registerUserAccount(e, 'email', p, {
+          accessType,
+          serverType: accessType === 'servidor' ? serverType : null,
+        });
         let serverMsg = '';
+        let createdMatricula: string | null = null;
         if (accessType === 'servidor') {
           const created = await supa.ensureServerAccessByEmail(e, p, serverType);
           if (created?.matricula) {
+            createdMatricula = created.matricula;
             serverMsg = ` Matrícula única gerada: ${created.matricula}.`;
           }
         }
+        if (accessType === 'servidor' && createdMatricula) {
+          setGeneratedMatricula(createdMatricula);
+          setPendingServerAuth({ email: e, role: accessType });
+          setSuccess(`Conta de servidor criada com sucesso!${serverMsg}`);
+          setPassword('');
+          setConfirmPassword('');
+          return;
+        }
+
         finishAuth(e, 'email', undefined, accessType);
-        if (serverMsg) setSuccess(`Conta de servidor criada com sucesso!${serverMsg}`);
         return;
       }
       setError('Supabase não configurado para cadastro.');
@@ -220,7 +242,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
             {mode !== 'forgot' && (
               <div className="flex bg-white/5 rounded-xl p-1 mb-5">
                 <button
-                  onClick={() => { setMode('login'); setError(''); setSuccess(''); }}
+                  onClick={() => { setMode('login'); setError(''); setSuccess(''); setGeneratedMatricula(null); setPendingServerAuth(null); }}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
                     mode === 'login' ? 'bg-blue-600 text-white shadow-lg' : 'text-white/60 hover:text-white/80'
                   }`}
@@ -228,7 +250,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                   <LogIn size={16} /> Entrar
                 </button>
                 <button
-                  onClick={() => { setMode('register'); setError(''); setSuccess(''); }}
+                  onClick={() => { setMode('register'); setError(''); setSuccess(''); setGeneratedMatricula(null); setPendingServerAuth(null); }}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
                     mode === 'register' ? 'bg-blue-600 text-white shadow-lg' : 'text-white/60 hover:text-white/80'
                   }`}
@@ -390,6 +412,27 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                   </>
                 )}
               </button>
+
+              {generatedMatricula && (
+                <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/15 p-4 text-emerald-100">
+                  <div className="flex items-center gap-2 mb-1">
+                    <BadgeCheck size={16} className="text-emerald-300" />
+                    <span className="text-xs font-semibold uppercase tracking-wide">Matrícula gerada</span>
+                  </div>
+                  <p className="text-2xl font-black tracking-wider text-white">{generatedMatricula}</p>
+                  <p className="text-[11px] text-emerald-100/80 mt-1">
+                    Guarde esta matrícula para acesso da área de servidor.
+                  </p>
+                  {pendingServerAuth && (
+                    <button
+                      onClick={() => finishAuth(pendingServerAuth.email, 'email', undefined, pendingServerAuth.role)}
+                      className="mt-3 w-full rounded-lg bg-emerald-500/80 hover:bg-emerald-400 text-emerald-950 font-semibold py-2 text-sm transition"
+                    >
+                      Entrar agora como servidor
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Forgot password link */}
               {mode === 'login' && (
@@ -961,9 +1004,13 @@ function AppContent() {
           if (session?.user?.email) {
             const sessionEmail = session.user.email;
             console.log('🔄 Sessão Supabase restaurada:', sessionEmail);
+            const roleInfo = await supa.getAccountAccessByEmail(sessionEmail);
             setAuthEmail(sessionEmail);
-            setAccessType('denunciante');
-            supa.registerUserAccount(sessionEmail, 'session').catch(() => {});
+            setAccessType(roleInfo.accessType);
+            supa.registerUserAccount(sessionEmail, 'session', undefined, {
+              accessType: roleInfo.accessType,
+              serverType: roleInfo.serverType,
+            }).catch(() => {});
             setIsAuthenticated(true);
             return;
           }
@@ -980,10 +1027,19 @@ function AppContent() {
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         if (session?.user?.email) {
           const sessionEmail = session.user.email;
-          setAuthEmail(sessionEmail);
-          setAccessType('denunciante');
-          supa.registerUserAccount(sessionEmail, session.user?.app_metadata?.provider || 'email').catch(() => {});
-          setIsAuthenticated(true);
+          supa.getAccountAccessByEmail(sessionEmail).then((roleInfo) => {
+            setAuthEmail(sessionEmail);
+            setAccessType(roleInfo.accessType);
+            supa.registerUserAccount(sessionEmail, session.user?.app_metadata?.provider || 'email', undefined, {
+              accessType: roleInfo.accessType,
+              serverType: roleInfo.serverType,
+            }).catch(() => {});
+            setIsAuthenticated(true);
+          }).catch(() => {
+            setAuthEmail(sessionEmail);
+            setAccessType('denunciante');
+            setIsAuthenticated(true);
+          });
         }
       });
       return () => subscription.unsubscribe();
