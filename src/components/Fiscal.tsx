@@ -9,7 +9,7 @@ import { useApp } from '../context/AppContext';
 import { Denuncia, TIPO_MULTA_VALORES } from '../types';
 import Mensagens from './Mensagens';
 import { PhotoGallery } from './PhotoViewer';
-import { notifyNewTask, requestNotificationPermission } from '../lib/notifications';
+import { notifyNewTaskWithAlert } from '../lib/notifications';
 
 const statusColors: Record<string, string> = {
   designada: 'bg-blue-500',
@@ -1700,23 +1700,7 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
 
     minhasDesignadas.forEach(d => {
       if (!knownTaskIdsRef.current.has(d.id)) {
-        try {
-          const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
-          if (Ctx) {
-            const ctx = new Ctx();
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.frequency.value = 880;
-            gain.gain.value = 0.08;
-            osc.start();
-            osc.stop(ctx.currentTime + 0.18);
-          }
-        } catch { /* ignore audio failure */ }
-        requestNotificationPermission().then(granted => {
-          if (granted) notifyNewTask(currentUser.nome || 'Fiscal', d.protocolo, d.tipo);
-        }).catch(() => {});
+        notifyNewTaskWithAlert(currentUser.nome || 'Fiscal', d.protocolo, d.tipo).catch(() => {});
       }
     });
 
