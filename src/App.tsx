@@ -196,6 +196,21 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
     }
   };
 
+  const handleLoadRegisteredAccounts = async () => {
+    setLoadingAccounts(true);
+    try {
+      const rows = await supa.listRegisteredAccounts();
+      setRegisteredAccounts(rows);
+      if (!rows.length) {
+        setError('Nenhuma conta encontrada em user_accounts/app_users neste projeto.');
+      } else {
+        setError('');
+      }
+    } finally {
+      setLoadingAccounts(false);
+    }
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
