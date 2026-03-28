@@ -174,6 +174,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   const [gpsCoords, setGpsCoords] = useState<{lat: number; lng: number} | null>(null);
   const [transcript, setTranscript] = useState('');
   const [speechSupported, setSpeechSupported] = useState(false);
+  const [micPermissionGranted, setMicPermissionGranted] = useState<boolean | null>(null);
   const [permissionsRequested, setPermissionsRequested] = useState(false);
   const recognitionRef = useRef<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -327,6 +328,24 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
     } catch {
       // ignore
     }
+
+  }, []);
+
+  const requestMicrophonePermission = useCallback(async () => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setMicPermissionGranted(false);
+        return false;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
+      setMicPermissionGranted(true);
+      return true;
+    } catch {
+      setMicPermissionGranted(false);
+      alert('Permissão de microfone negada. Ative o microfone para transcrever a descrição.');
+      return false;
+    }
   }, []);
 
   useEffect(() => {
@@ -378,9 +397,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 
     recognition.onerror = (event: any) => {
       console.error('Speech error:', event.error);
-      if (event.error === 'not-allowed') {
-        alert('Permissão de microfone negada. Ative o microfone nas configurações do navegador.');
-      }
+      if (event.error === 'not-allowed') requestMicrophonePermission();
       setIsRecording(false);
     };
 
@@ -396,7 +413,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
     };
 
     recognition.start();
-  }, [isRecording]);
+  }, [isRecording, requestMicrophonePermission]);
 
   // compressPhoto imported from lib/photoCompressor
 
@@ -604,6 +621,18 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
                 )}
 
                 <div className="mt-2 flex items-center gap-2">
+                  <button
+                    onClick={requestMicrophonePermission}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition ${
+                      micPermissionGranted === true
+                        ? 'bg-green-50 text-green-700 border border-green-200'
+                        : 'bg-white text-blue-700 border border-blue-200 hover:bg-blue-50'
+                    }`}
+                  >
+                    <Mic size={16} />
+                    {micPermissionGranted === true ? '✅ Microfone ativo' : 'Ativar microfone'}
+                  </button>
+
                   <button
                     onClick={handleRecording}
                     className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition ${
