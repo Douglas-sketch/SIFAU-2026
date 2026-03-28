@@ -355,7 +355,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   }, [step, permissionsRequested, requestRequiredPermissions]);
 
   // Speech Recognition - Real voice to text
-  const handleRecording = useCallback(() => {
+  const handleRecording = useCallback(async () => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     
     if (!SR) {
@@ -366,6 +366,16 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
     if (isRecording && recognitionRef.current) {
       recognitionRef.current.stop();
       setIsRecording(false);
+      return;
+    }
+
+    try {
+      if (navigator.mediaDevices?.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => track.stop());
+      }
+    } catch {
+      alert('Permissão de microfone negada. Ative o microfone para transcrever a descrição.');
       return;
     }
 
