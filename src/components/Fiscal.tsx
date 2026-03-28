@@ -9,7 +9,7 @@ import { useApp } from '../context/AppContext';
 import { Denuncia, TIPO_MULTA_VALORES } from '../types';
 import Mensagens from './Mensagens';
 import { PhotoGallery } from './PhotoViewer';
-import { notifyNewTaskWithAlert } from '../lib/notifications';
+import { notifyNewTaskWithAlert, requestNotificationPermission } from '../lib/notifications';
 
 const statusColors: Record<string, string> = {
   designada: 'bg-blue-500',
@@ -1706,6 +1706,11 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
 
     knownTaskIdsRef.current = nextIds;
   }, [denuncias, currentUser]);
+
+  // Solicitar permissão de notificação ao abrir módulo do fiscal
+  useEffect(() => {
+    requestNotificationPermission().catch(() => {});
+  }, []);
 
   if (viewingReport) {
     const fresh = denuncias.find(d => d.id === viewingReport.id);
