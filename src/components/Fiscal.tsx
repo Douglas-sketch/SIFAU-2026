@@ -1654,6 +1654,9 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
   const { getConversas, currentUser } = useApp();
   const totalUnread = currentUser ? getConversas(currentUser.id).reduce((s, c) => s + c.unread, 0) : 0;
   const knownTaskIdsRef = useRef<Set<string>>(new Set());
+  const [notificationPermission, setNotificationPermission] = useState<'granted' | 'denied' | 'default' | 'unsupported'>(
+    typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
+  );
 
   // Handle device back button
   useEffect(() => {
@@ -1707,10 +1710,17 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
     knownTaskIdsRef.current = nextIds;
   }, [denuncias, currentUser]);
 
-  // Solicitar permissão de notificação ao abrir módulo do fiscal
-  useEffect(() => {
-    requestNotificationPermission().catch(() => {});
-  }, []);
+  const handleEnableNotifications = async () => {
+    const granted = await requestNotificationPermission();
+    if (typeof Notification !== 'undefined') {
+      setNotificationPermission(Notification.permission);
+    } else {
+      setNotificationPermission('unsupported');
+    }
+    if (granted) {
+      notifyNewTaskWithAlert(currentUser?.nome || 'Fiscal', 'DEMO', 'Permissão ativada com sucesso').catch(() => {});
+    }
+  };
 
   if (viewingReport) {
     const fresh = denuncias.find(d => d.id === viewingReport.id);
@@ -1735,6 +1745,21 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
 
   return (
     <div className="min-h-screen bg-gray-50 lg:flex">
+      {notificationPermission !== 'granted' && notificationPermission !== 'unsupported' && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[120] w-[92%] max-w-xl rounded-xl border border-amber-300 bg-amber-50 shadow-lg p-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-amber-800">Ative notificações do fiscal</p>
+            <p className="text-xs text-amber-700">Para receber alerta no celular quando houver nova tarefa designada.</p>
+          </div>
+          <button
+            onClick={handleEnableNotifications}
+            className="shrink-0 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-amber-950 text-xs font-semibold"
+          >
+            Ativar
+          </button>
+        </div>
+      )}
+
       {/* Notifications */}
       <AnimatePresence>
         {notifications.map(n => (
