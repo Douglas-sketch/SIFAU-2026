@@ -1647,7 +1647,7 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
 }
 
 export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }: { onLogout: () => void; onOpenSettings: () => void; theme: string; profilePhoto?: string }) {
-  const { denuncias, notifications, dismissNotification } = useApp();
+  const { denuncias, notifications, dismissNotification, addNotification } = useApp();
   const [tab, setTab] = useState<'home' | 'processos' | 'pontos' | 'mensagens'>('home');
   const [selectedTask, setSelectedTask] = useState<Denuncia | null>(null);
   const [viewingReport, setViewingReport] = useState<Denuncia | null>(null);
@@ -1722,6 +1722,17 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
     }
   };
 
+  // Fallback interno quando o dispositivo não suporta Notification API
+  useEffect(() => {
+    const handler = (evt: Event) => {
+      const custom = evt as CustomEvent<{ title?: string; body?: string }>;
+      const text = custom.detail?.body || custom.detail?.title || 'Nova atualização do sistema.';
+      addNotification(text, 'info');
+    };
+    window.addEventListener('sifau-inapp-notification', handler as EventListener);
+    return () => window.removeEventListener('sifau-inapp-notification', handler as EventListener);
+  }, [addNotification]);
+
   if (viewingReport) {
     const fresh = denuncias.find(d => d.id === viewingReport.id);
     if (fresh) {
@@ -1745,18 +1756,24 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
 
   return (
     <div className="min-h-screen bg-gray-50 lg:flex">
-      {notificationPermission !== 'granted' && notificationPermission !== 'unsupported' && (
+      {notificationPermission !== 'granted' && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[120] w-[92%] max-w-xl rounded-xl border border-amber-300 bg-amber-50 shadow-lg p-3 flex items-center justify-between gap-3">
           <div>
             <p className="text-sm font-semibold text-amber-800">Ative notificações do fiscal</p>
-            <p className="text-xs text-amber-700">Para receber alerta no celular quando houver nova tarefa designada.</p>
+            <p className="text-xs text-amber-700">
+              {notificationPermission === 'unsupported'
+                ? 'Seu dispositivo não expõe Notification API. O app usará alertas internos com som e vibração.'
+                : 'Para receber alerta no celular quando houver nova tarefa designada.'}
+            </p>
           </div>
-          <button
-            onClick={handleEnableNotifications}
-            className="shrink-0 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-amber-950 text-xs font-semibold"
-          >
-            Ativar
-          </button>
+          {notificationPermission !== 'unsupported' && (
+            <button
+              onClick={handleEnableNotifications}
+              className="shrink-0 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-amber-950 text-xs font-semibold"
+            >
+              Ativar
+            </button>
+          )}
         </div>
       )}
 

@@ -5,8 +5,25 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return result === 'granted';
 }
 
+function emitInAppNotification(title: string, body: string) {
+  try {
+    window.dispatchEvent(new CustomEvent('sifau-inapp-notification', {
+      detail: { title, body }
+    }));
+  } catch {
+    // ignore
+  }
+}
+
 export function sendNotification(title: string, body: string, icon?: string) {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  if (!('Notification' in window)) {
+    emitInAppNotification(title, body);
+    return;
+  }
+  if (Notification.permission !== 'granted') {
+    emitInAppNotification(title, body);
+    return;
+  }
   
   try {
     new Notification(title, {
@@ -63,8 +80,8 @@ export function notifyNewTask(fiscalName: string, protocolo: string, tipo: strin
 
 export async function notifyNewTaskWithAlert(fiscalName: string, protocolo: string, tipo: string) {
   playTaskAlertSound();
-  const granted = await requestNotificationPermission();
-  if (granted) notifyNewTask(fiscalName, protocolo, tipo);
+  await requestNotificationPermission();
+  notifyNewTask(fiscalName, protocolo, tipo);
 }
 
 export function notifyStatusChange(protocolo: string, newStatus: string) {
