@@ -1654,6 +1654,7 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
   const { getConversas, currentUser } = useApp();
   const totalUnread = currentUser ? getConversas(currentUser.id).reduce((s, c) => s + c.unread, 0) : 0;
   const knownTaskIdsRef = useRef<Set<string>>(new Set());
+  const taskWatchBootstrappedRef = useRef(false);
   const [notificationPermission, setNotificationPermission] = useState<'granted' | 'denied' | 'default' | 'unsupported'>(
     typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
   );
@@ -1701,6 +1702,13 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
     const minhasDesignadas = denuncias.filter(d => d.fiscal_id === currentUser.id && d.status === 'designada');
     const nextIds = new Set(minhasDesignadas.map(d => d.id));
 
+    // Primeira carga: só registra o estado atual para evitar alertas de tarefas antigas
+    if (!taskWatchBootstrappedRef.current) {
+      knownTaskIdsRef.current = nextIds;
+      taskWatchBootstrappedRef.current = true;
+      return;
+    }
+
     minhasDesignadas.forEach(d => {
       if (!knownTaskIdsRef.current.has(d.id)) {
         notifyNewTaskWithAlert(currentUser.nome || 'Fiscal', d.protocolo, d.tipo).catch(() => {});
@@ -1718,7 +1726,9 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
       setNotificationPermission('unsupported');
     }
     if (granted) {
-      notifyNewTaskWithAlert(currentUser?.nome || 'Fiscal', 'DEMO', 'Permissão ativada com sucesso').catch(() => {});
+      addNotification('✅ Notificações ativadas com sucesso.', 'success');
+    } else {
+      addNotification('⚠️ Permissão negada. Ative notificações nas configurações do dispositivo/navegador.', 'warning');
     }
   };
 

@@ -425,6 +425,12 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
     recognition.start();
   }, [isRecording, requestMicrophonePermission]);
 
+  useEffect(() => {
+    return () => {
+      try { recognitionRef.current?.stop?.(); } catch { /* ignore */ }
+    };
+  }, []);
+
   // compressPhoto imported from lib/photoCompressor
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
