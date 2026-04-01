@@ -21,11 +21,11 @@ interface AppState {
   notifications: Notification[];
   isOnline: boolean;
   login: (matricula: string, senha: string) => Promise<Profile | null>;
-  registerFiscalAutomatico: (email: string, senha: string, nome?: string) => Promise<{ matricula: string; profile: Profile } | null>;
+  registerFiscalAutomatico: (email: string, senha: string, nome?: string, tipo?: 'fiscal' | 'gerente') => Promise<{ matricula: string; profile: Profile } | null>;
   logout: () => void;
   addDenuncia: (d: Omit<Denuncia, 'id' | 'protocolo' | 'created_at' | 'updated_at'>) => Denuncia;
   updateDenunciaStatus: (id: string, status: DenunciaStatus, extra?: Partial<Denuncia>) => void;
-  designarDenuncia: (denunciaId: string, fiscalId: string, pontosProvisorio: number) => void;
+  designarDenuncia: (denunciaId: string, fiscalId: string, pontosProvisorio: number) => Promise<boolean>;
   upsertRelatorio: (r: Omit<Relatorio, 'id' | 'created_at'>) => void;
   addAuto: (a: Omit<AutoInfracao, 'id' | 'created_at'>) => void;
   aprovarRelatorio: (denunciaId: string) => void;
@@ -65,6 +65,7 @@ function getDeviceId(): string {
 }
 
 const DEVICE_ID = getDeviceId();
+const SERVER_SESSION_KEY = 'sifau_server_session_v1';
 
 // Auth email for per-account storage — reads from the same key as App.tsx saves to
 function getAuthEmail(): string {
@@ -150,9 +151,9 @@ const AppContext = createContext<AppState>({} as AppState);
 export const useApp = () => useContext(AppContext);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const initialEmail = getAuthEmail();
-  const stored = loadFromStorage(initialEmail);
-  const initialProfiles = resetAllStatusesToOffline(ensureAllProfiles(stored?.profiles || mockProfiles));
+  const initialEmail = 'anonymous';
+  const stored = null;
+  const initialProfiles = resetAllStatusesToOffline(ensureAllProfiles(mockProfiles));
   const [profiles, setProfiles] = useState<Profile[]>(initialProfiles);
   const [denuncias, setDenuncias] = useState<Denuncia[]>(stored?.denuncias?.length ? stored.denuncias : mockDenuncias);
   const [relatorios, setRelatorios] = useState<Relatorio[]>(stored?.relatorios || mockRelatorios);
@@ -168,6 +169,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const currentUserRef = useRef<Profile | null>(null);
 
   useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
+
+  // Restaurar sessão de servidor (fiscal/gerente) para não voltar ao login técnico ao reabrir
+  useEffect(() => {
+    if (currentUser) return;
+    try {
+      const raw = localStorage.getItem(SERVER_SESSION_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { userId?: string };
+      if (!parsed?.userId) return;
+      const user = profiles.find(p => p.id === parsed.userId);
+      if (user && (user.tipo === 'fiscal' || user.tipo === 'gerente')) {
+        setCurrentUser({ ...user, status_online: 'online' as const });
+      }
+    } catch { /* */ }
+  }, [profiles, currentUser]);
 
   // ═══ AUTO-OFFLINE ═══
   useEffect(() => {
@@ -233,14 +249,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
           if (!cancelled && profs.length) {
             setProfiles(prev => {
-              const merged = ensureAllProfiles(prev).map(p => {
+              const base = ensureAllProfiles(prev);
+              const merged = base.map(p => {
                 const fromSupa = profs.find(sp => sp.id === p.id);
                 if (fromSupa) {
                   return { ...p, ...fromSupa, senha: p.senha || fromSupa.senha, status_online: 'offline' as const };
                 }
                 return p;
               });
-              return merged;
+
+              const extras = profs
+                .filter(sp => !merged.some(mp => mp.id === sp.id))
+                .map(sp => ({ ...sp, status_online: 'offline' as const }));
+
+              return [...merged, ...extras];
             });
           }
           if (!cancelled && dens.length) {
@@ -261,10 +283,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => { cancelled = true; };
   }, []);
 
-  // ═══ PERSIST ═══
-  useEffect(() => {
-    saveToStorage({ profiles, denuncias, relatorios, autos, historico, mensagens }, authEmail);
-  }, [profiles, denuncias, relatorios, autos, historico, mensagens, authEmail]);
+  // Persistência local desativada (Supabase-first)
 
   // ═══ RECALCULAR PONTOS DOS FISCAIS (SOMA TOTAL DO HISTÓRICO) ═══
   useEffect(() => {
@@ -357,17 +376,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return merged;
         });
         if (freshProfs.length) {
-          setProfiles(prev => prev.map(p => {
-            const fresh = freshProfs.find(fp => fp.id === p.id);
-            if (fresh) {
-              return {
-                ...p, ...fresh,
-                senha: p.senha || fresh.senha,
-                status_online: p.id === currentUserRef.current?.id ? 'online' as const : fresh.status_online,
-              };
-            }
-            return p;
-          }));
+          setProfiles(prev => {
+            const updated = prev.map(p => {
+              const fresh = freshProfs.find(fp => fp.id === p.id);
+              if (fresh) {
+                return {
+                  ...p, ...fresh,
+                  senha: p.senha || fresh.senha,
+                  status_online: p.id === currentUserRef.current?.id ? 'online' as const : fresh.status_online,
+                };
+              }
+              return p;
+            });
+
+            const extras = freshProfs
+              .filter(fp => !updated.some(up => up.id === fp.id))
+              .map(fp => ({
+                ...fp,
+                status_online: fp.id === currentUserRef.current?.id ? 'online' as const : fp.status_online,
+              }));
+
+            return ensureAllProfiles([...updated, ...extras]);
+          });
         }
       } catch { /* ignore */ }
     }, 5000);
@@ -379,22 +409,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.id, isOnline]);
-
-  // ═══ OFFLINE POLLING ═══
-  useEffect(() => {
-    if (isOnline) return;
-    const interval = setInterval(() => {
-      const fresh = loadFromStorage(authEmail);
-      if (fresh) {
-        setMensagens(prev => { const s = JSON.stringify(fresh.mensagens); return s !== JSON.stringify(prev) ? fresh.mensagens : prev; });
-        setDenuncias(prev => { const s = JSON.stringify(fresh.denuncias); return s !== JSON.stringify(prev) ? fresh.denuncias : prev; });
-        setRelatorios(prev => { const s = JSON.stringify(fresh.relatorios); return s !== JSON.stringify(prev) ? fresh.relatorios : prev; });
-        setAutos(prev => { const s = JSON.stringify(fresh.autos); return s !== JSON.stringify(prev) ? fresh.autos : prev; });
-        setHistorico(prev => { const s = JSON.stringify(fresh.historico); return s !== JSON.stringify(prev) ? fresh.historico : prev; });
-      }
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [isOnline]);
 
   const addNotification = useCallback((message: string, type: Notification['type']) => {
     const n: Notification = { id: `notif-${Date.now()}-${Math.random()}`, message, type, timestamp: new Date().toISOString() };
@@ -408,13 +422,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
 
 
-  const registerFiscalAutomatico = useCallback(async (email: string, senha: string, nome?: string): Promise<{ matricula: string; profile: Profile } | null> => {
+  const registerFiscalAutomatico = useCallback(async (email: string, senha: string, nome?: string, tipo: 'fiscal' | 'gerente' = 'fiscal'): Promise<{ matricula: string; profile: Profile } | null> => {
     const cleanEmail = email.trim().toLowerCase();
     const cleanSenha = senha.trim();
-    const baseNome = (nome || cleanEmail.split('@')[0] || 'Fiscal').trim();
+    const baseNome = (nome || cleanEmail.split('@')[0] || (tipo === 'gerente' ? 'Gerente' : 'Fiscal')).trim();
     if (!cleanEmail || !cleanSenha) return null;
 
-    const profileId = `fsc-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+    const prefix = tipo === 'gerente' ? 'GER' : 'FSC';
+    const profileId = `${prefix.toLowerCase()}-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
 
     let existing: Profile | null = null;
     if (isOnline) {
@@ -427,18 +442,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const all = isOnline ? await supa.getAllProfiles() : profiles;
     const source = all.length ? all : profiles;
-    const maxFsc = source.reduce((acc, p) => {
-      const m = (p.matricula || '').toUpperCase().match(/^FSC-(\d+)$/);
+    const maxByTipo = source.reduce((acc, p) => {
+      const m = (p.matricula || '').toUpperCase().match(new RegExp(`^${prefix}-(\\d+)$`));
       if (!m) return acc;
       return Math.max(acc, Number(m[1]));
     }, 0);
 
-    const matricula = existing?.matricula || `FSC-${String(maxFsc + 1).padStart(3, '0')}`;
+    const matricula = existing?.matricula || `${prefix}-${String(maxByTipo + 1).padStart(3, '0')}`;
 
     const profile: Profile = {
       id: profileId,
       nome: baseNome,
-      tipo: 'fiscal',
+      tipo,
       matricula,
       senha: cleanSenha,
       status_online: 'offline',
@@ -458,7 +473,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await supa.registerUserAccount(cleanEmail, 'email');
     }
 
-    addNotification(`Fiscal criado com matrícula ${matricula}.`, 'success');
+    addNotification(`${tipo === 'gerente' ? 'Gerente' : 'Fiscal'} criado com matrícula ${matricula}.`, 'success');
     return { matricula, profile };
   }, [isOnline, profiles, addNotification]);
 
@@ -527,6 +542,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return [...prev, user];
       });
       setCurrentUser(user);
+      try { localStorage.setItem(SERVER_SESSION_KEY, JSON.stringify({ userId: user.id, ts: Date.now() })); } catch { /* */ }
       return user;
     }
 
@@ -542,6 +558,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return [...prev, user];
           });
           setCurrentUser(user);
+          try { localStorage.setItem(SERVER_SESSION_KEY, JSON.stringify({ userId: user.id, ts: Date.now() })); } catch { /* */ }
           return user;
         }
       } catch (e) {
@@ -562,6 +579,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     channelsRef.current.forEach(ch => supa.unsubscribe(ch));
     channelsRef.current = [];
     setCurrentUser(null);
+    try { localStorage.removeItem(SERVER_SESSION_KEY); } catch { /* */ }
   }, [currentUser]);
 
   // ═══ DENÚNCIAS ═══
@@ -600,17 +618,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [isOnline]);
 
-  const designarDenuncia = useCallback((denunciaId: string, fiscalId: string, pontosProvisorio: number) => {
+  const designarDenuncia = useCallback(async (denunciaId: string, fiscalId: string, pontosProvisorio: number): Promise<boolean> => {
     setDenuncias(prev => prev.map(d =>
       d.id === denunciaId
         ? { ...d, fiscal_id: fiscalId, gerente_id: currentUser?.id, status: 'designada' as DenunciaStatus, pontos_provisorio: pontosProvisorio, updated_at: new Date().toISOString() }
         : d
     ));
+    let synced = true;
     if (isOnline) {
-      supa.updateDenuncia(denunciaId, {
+      synced = await supa.updateDenuncia(denunciaId, {
         fiscal_id: fiscalId, gerente_id: currentUser?.id,
         status: 'designada', pontos_provisorio: pontosProvisorio,
       });
+      if (!synced) {
+        addNotification('⚠️ Não foi possível sincronizar a designação com o servidor. Verifique a conexão/permissões.', 'warning');
+      }
     }
 
     // ═══ PONTOS CREDITADOS IMEDIATAMENTE NA DESIGNAÇÃO ═══
@@ -651,6 +673,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     addNotification(`Designada para ${fiscal?.nome || 'fiscal'} com ${pontosProvisorio} pts creditados!`, 'success');
+    return synced;
   }, [currentUser, isOnline, addNotification, profiles, denuncias]);
 
   // ═══ RELATÓRIOS ═══
@@ -840,39 +863,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const setAuthEmail = useCallback((email: string) => {
     const clean = email.toLowerCase().replace(/[^a-z0-9@._-]/g, '') || 'anonymous';
-    const oldEmail = authEmail;
     setAuthEmailState(clean);
-    
-    // CRITICAL: Save to localStorage so getAuthEmail() can find it on next load
-    localStorage.setItem('sifau_auth_email', clean);
-    
-    // If email changed, load that email's data
-    if (clean !== oldEmail && clean !== 'anonymous') {
-      console.log(`📧 Email mudou: ${oldEmail} → ${clean}. Carregando dados...`);
-      const emailData = loadFromStorage(clean);
-      if (emailData) {
-        setProfiles(emailData.profiles);
-        setDenuncias(emailData.denuncias);
-        setRelatorios(emailData.relatorios);
-        setAutos(emailData.autos);
-        setHistorico(emailData.historico);
-        setMensagens(emailData.mensagens);
-      } else {
-        // New email — start fresh (keep profiles, clear everything else)
-        console.log(`🆕 Novo email: ${clean}. Iniciando dados limpos.`);
-        setDenuncias([]);
-        setRelatorios([]);
-        setAutos([]);
-        setHistorico([]);
-        setMensagens([]);
-      }
-    }
-    
+
     // Register in Supabase user_accounts
     if (isOnline) {
       supa.registerUserAccount(clean, 'email');
     }
-  }, [isOnline, authEmail]);
+  }, [isOnline]);
 
 
 
