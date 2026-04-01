@@ -35,38 +35,43 @@ export async function checkConnection(): Promise<boolean> {
 
   try {
     addLog('🔍 Testando conexão...');
-    
-    // Step 1: Simple fetch test to see if the URL is reachable
-    const { data, error } = await supabase
+
+    // Preferir user_accounts (contas de e-mail), com fallback para profiles.
+    const { data: uaData, error: uaError } = await supabase
+      .from('user_accounts')
+      .select('id, email')
+      .limit(1);
+
+    if (!uaError) {
+      addLog(`✅ Supabase OK via user_accounts (${uaData?.length || 0} registro(s) lido(s)).`);
+      supabaseReady = true;
+      return true;
+    }
+
+    const { data: pfData, error: pfError } = await supabase
       .from('profiles')
       .select('id, nome')
       .limit(1);
 
-    if (error) {
-      addLog(`❌ Erro: ${error.message}`);
-      if (error.code === '42P01' || error.message.includes('relation')) {
-        addLog('⚠️ TABELAS NÃO EXISTEM! Execute o SQL no Supabase.');
-      }
-      if (error.message.includes('FetchError') || error.message.includes('fetch')) {
-        addLog('⚠️ Servidor não acessível. Verifique a URL.');
-      }
-      if (error.message.includes('JWT') || error.message.includes('apikey')) {
-        addLog('⚠️ Chave API inválida.');
-      }
-      supabaseReady = false;
-      return false;
+    if (!pfError) {
+      addLog(`✅ Supabase OK via profiles (${pfData?.length || 0} registro(s) lido(s)).`);
+      supabaseReady = true;
+      return true;
     }
 
-    if (!data || data.length === 0) {
-      addLog('⚠️ Conexão OK mas tabela profiles está VAZIA');
-      addLog('⚠️ Execute o SQL com os INSERTs dos usuários');
-      supabaseReady = false;
-      return false;
+    const error = pfError || uaError;
+    addLog(`❌ Erro: ${error?.message || 'Falha desconhecida'}`);
+    if (error?.code === '42P01' || (error?.message || '').includes('relation')) {
+      addLog('⚠️ Tabelas esperadas não encontradas (profiles/user_accounts). Verifique o schema no projeto atual.');
     }
-
-    addLog(`✅ Supabase OK! ${data.length} profile(s) encontrado(s): ${data[0]?.nome}`);
-    supabaseReady = true;
-    return true;
+    if ((error?.message || '').includes('FetchError') || (error?.message || '').includes('fetch')) {
+      addLog('⚠️ Servidor não acessível. Verifique URL/projeto/rede.');
+    }
+    if ((error?.message || '').includes('JWT') || (error?.message || '').includes('apikey')) {
+      addLog('⚠️ Chave API inválida ou sem permissão.');
+    }
+    supabaseReady = false;
+    return false;
   } catch (e: any) {
     addLog(`❌ Exceção: ${e?.message || String(e)}`);
     supabaseReady = false;
@@ -222,12 +227,18 @@ export async function createDenuncia(d: Denuncia): Promise<Denuncia | null> {
   } catch (e: any) { addLog(`❌ Exceção criar denúncia: ${e?.message}`); return null; }
 }
 
-export async function updateDenuncia(id: string, updates: Partial<Record<string, any>>): Promise<void> {
-  if (!ok()) return;
+export async function updateDenuncia(id: string, updates: Partial<Record<string, any>>): Promise<boolean> {
+  if (!ok()) return false;
   try {
     const { error } = await supabase!.from('denuncias').update(updates).eq('id', id);
-    if (error) addLog(`❌ Erro update denúncia: ${error.message}`);
-  } catch { /* */ }
+    if (error) {
+      addLog(`❌ Erro update denúncia: ${error.message}`);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ============================================
@@ -520,7 +531,12 @@ export async function deleteUserAccount(email: string): Promise<boolean> {
   }
 }
 
-export async function registerUserAccount(email: string, provider: string = 'email', password?: string): Promise<void> {
+export async function registerUserAccount(
+  email: string,
+  provider: string = 'email',
+  password?: string,
+  opts?: { accessType?: 'denunciante' | 'servidor'; serverType?: 'fiscal' | 'gerente' | null }
+): Promise<void> {
   // NÃO depende de ok() — tenta SEMPRE salvar no Supabase diretamente
   if (!supabase || !email || email === 'anonymous') {
     addLog(`⚠️ registerUserAccount: sem supabase ou email inválido (${email})`);
@@ -538,6 +554,8 @@ export async function registerUserAccount(email: string, provider: string = 'ema
       dispositivo: navigator.userAgent.substring(0, 100),
     };
     if (provider === 'email' && password) payload.senha = password;
+    if (opts?.accessType) payload.access_type = opts.accessType;
+    if (opts?.serverType !== undefined) payload.server_type = opts.serverType;
 
     const { error } = await supabase
       .from('user_accounts')
@@ -553,6 +571,8 @@ export async function registerUserAccount(email: string, provider: string = 'ema
         dispositivo: navigator.userAgent.substring(0, 100),
       };
       if (provider === 'email' && password) insertPayload.senha = password;
+      if (opts?.accessType) insertPayload.access_type = opts.accessType;
+      if (opts?.serverType !== undefined) insertPayload.server_type = opts.serverType;
 
       const { error: insertError } = await supabase
         .from('user_accounts')
@@ -565,6 +585,8 @@ export async function registerUserAccount(email: string, provider: string = 'ema
             dispositivo: navigator.userAgent.substring(0, 100),
           };
           if (provider === 'email' && password) updatePayload.senha = password;
+          if (opts?.accessType) updatePayload.access_type = opts.accessType;
+          if (opts?.serverType !== undefined) updatePayload.server_type = opts.serverType;
 
           await supabase
             .from('user_accounts')
@@ -585,6 +607,49 @@ export async function registerUserAccount(email: string, provider: string = 'ema
   }
 }
 
+export async function getAccountAccessByEmail(email: string): Promise<{ accessType: 'denunciante' | 'servidor'; serverType: 'fiscal' | 'gerente' | null }> {
+  if (!supabase || !email) return { accessType: 'denunciante', serverType: null };
+  const cleanEmail = email.trim().toLowerCase();
+  try {
+    const { data: ua } = await supabase
+      .from('user_accounts')
+      .select('access_type, server_type')
+      .eq('email', cleanEmail)
+      .limit(1)
+      .maybeSingle();
+
+    if (ua?.access_type === 'servidor') {
+      return { accessType: 'servidor', serverType: (ua.server_type as 'fiscal' | 'gerente' | null) || null };
+    }
+
+    const { data: appUser } = await supabase
+      .from('app_users')
+      .select('access_type, server_type')
+      .eq('email', cleanEmail)
+      .limit(1)
+      .maybeSingle();
+
+    if (appUser?.access_type === 'servidor') {
+      return { accessType: 'servidor', serverType: (appUser.server_type as 'fiscal' | 'gerente' | null) || null };
+    }
+
+    const fiscalId = `fsc-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+    const gerenteId = `ger-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+    const { data: prof } = await supabase
+      .from('profiles')
+      .select('tipo')
+      .in('id', [fiscalId, gerenteId])
+      .limit(1);
+
+    const serverTipo = (prof || []).find((p: any) => p?.tipo === 'fiscal' || p?.tipo === 'gerente')?.tipo;
+    if (serverTipo) return { accessType: 'servidor', serverType: serverTipo };
+
+    return { accessType: 'denunciante', serverType: null };
+  } catch {
+    return { accessType: 'denunciante', serverType: null };
+  }
+}
+
 export async function userAccountExists(email: string): Promise<boolean> {
   if (!supabase || !email || email === 'anonymous') return false;
   try {
@@ -594,10 +659,154 @@ export async function userAccountExists(email: string): Promise<boolean> {
       .eq('email', email.toLowerCase())
       .limit(1)
       .maybeSingle();
-    if (error) return false;
-    return !!data;
+    if (!error && data) return true;
+
+    const { data: appUser, error: appErr } = await supabase
+      .from('app_users')
+      .select('email')
+      .eq('email', email.toLowerCase())
+      .limit(1)
+      .maybeSingle();
+
+    if (appErr) return false;
+    return !!appUser;
   } catch {
     return false;
+  }
+}
+
+export async function checkUserAccountCredentials(
+  email: string,
+  password: string
+): Promise<'ok' | 'wrong_password' | 'not_found'> {
+  if (!supabase || !email || email === 'anonymous') return 'not_found';
+  try {
+    const { data, error } = await supabase
+      .from('user_accounts')
+      .select('email, senha')
+      .eq('email', email.toLowerCase())
+      .limit(1)
+      .maybeSingle();
+
+    if (!error && data) {
+      if ((data.senha || '') !== password) return 'wrong_password';
+      return 'ok';
+    }
+
+    const { data: appData, error: appError } = await supabase
+      .from('app_users')
+      .select('email, senha_legacy')
+      .eq('email', email.toLowerCase())
+      .limit(1)
+      .maybeSingle();
+
+    if (appError || !appData) return 'not_found';
+    if ((appData.senha_legacy || '') !== password) return 'wrong_password';
+    return 'ok';
+  } catch {
+    return 'not_found';
+  }
+}
+
+export async function ensureServerAccessByEmail(
+  email: string,
+  password: string,
+  tipo: 'fiscal' | 'gerente' = 'fiscal'
+): Promise<{ matricula: string; profileId: string } | null> {
+  if (!supabase || !email || !password) return null;
+  try {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanSenha = password.trim();
+    const prefix = tipo === 'gerente' ? 'GER' : 'FSC';
+    const profileId = `${prefix.toLowerCase()}-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+    const nome = cleanEmail.split('@')[0] || (tipo === 'gerente' ? 'Gerente' : 'Fiscal');
+
+    const { data: existing } = await supabase
+      .from('profiles')
+      .select('id, matricula')
+      .eq('id', profileId)
+      .maybeSingle();
+
+    if (existing?.matricula) {
+      await supabase.from('profiles').update({ senha: cleanSenha, tipo }).eq('id', profileId);
+      return { matricula: existing.matricula, profileId };
+    }
+
+    const { data: rows } = await supabase
+      .from('profiles')
+      .select('matricula')
+      .ilike('matricula', `${prefix}-%`);
+
+    const maxCode = (rows || []).reduce((acc: number, row: any) => {
+      const m = (row?.matricula || '').toUpperCase().match(new RegExp(`^${prefix}-(\\d+)$`));
+      if (!m) return acc;
+      return Math.max(acc, Number(m[1]));
+    }, 0);
+
+    const matricula = `${prefix}-${String(maxCode + 1).padStart(3, '0')}`;
+    const payload = {
+      id: profileId,
+      nome,
+      tipo,
+      matricula,
+      senha: cleanSenha,
+      status: 'offline',
+      pontos: 0,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase.from('profiles').upsert(payload);
+    if (error) {
+      addLog(`❌ ensureServerAccessByEmail: ${error.message}`);
+      return null;
+    }
+
+    addLog(`✅ Acesso servidor criado para ${cleanEmail}: ${matricula}`);
+    return { matricula, profileId };
+  } catch (e: any) {
+    addLog(`❌ ensureServerAccessByEmail exceção: ${e?.message || e}`);
+    return null;
+  }
+}
+
+export async function listRegisteredAccounts(): Promise<Array<{
+  email: string;
+  provider?: string;
+  access_type?: string;
+  server_type?: string | null;
+}>> {
+  if (!supabase) return [];
+  try {
+    const { data: uaData, error: uaError } = await supabase
+      .from('user_accounts')
+      .select('email, provider, access_type, server_type')
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (!uaError && Array.isArray(uaData) && uaData.length > 0) {
+      return uaData.map((r: any) => ({
+        email: r.email,
+        provider: r.provider,
+        access_type: r.access_type,
+        server_type: r.server_type,
+      }));
+    }
+
+    const { data: appData, error: appError } = await supabase
+      .from('app_users')
+      .select('email, provider, access_type, server_type')
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (appError || !Array.isArray(appData)) return [];
+    return appData.map((r: any) => ({
+      email: r.email,
+      provider: r.provider,
+      access_type: r.access_type,
+      server_type: r.server_type,
+    }));
+  } catch {
+    return [];
   }
 }
 

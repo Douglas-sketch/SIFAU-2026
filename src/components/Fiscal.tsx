@@ -9,6 +9,7 @@ import { useApp } from '../context/AppContext';
 import { Denuncia, TIPO_MULTA_VALORES } from '../types';
 import Mensagens from './Mensagens';
 import { PhotoGallery } from './PhotoViewer';
+import { notifyNewTaskWithAlert, requestNotificationPermission } from '../lib/notifications';
 
 const statusColors: Record<string, string> = {
   designada: 'bg-blue-500',
@@ -1327,14 +1328,28 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
             </button>
             <button
               onClick={() => {
-                const printWindow = window.open('', '_blank');
-                if (!printWindow) return;
                 const fotosHtml = fotosRel.map(f => `<img src="${f}" style="width:200px;height:150px;object-fit:cover;border-radius:8px;border:1px solid #ddd;" />`).join('');
                 const assHtml = assinatura ? `<div style="margin-top:16px;"><p style="font-weight:bold;color:#555;font-size:12px;">ASSINATURA DIGITAL</p><img src="${assinatura}" style="height:60px;border:1px solid #ddd;border-radius:4px;padding:4px;background:#f9fafb;" /></div>` : '';
                 const osHtml = `${os20 ? '<span style="background:#dcfce7;color:#166534;padding:4px 10px;border-radius:12px;font-size:12px;font-weight:bold;">✅ O.S. 2.0 — Cumprida (+50 pts)</span>' : ''}${os40 ? '<span style="background:#dcfce7;color:#166534;padding:4px 10px;border-radius:12px;font-size:12px;font-weight:bold;margin-left:8px;">✅ O.S. 4.0 — Notificação (+50 pts)</span>' : ''}`;
-                printWindow.document.write(`<!DOCTYPE html><html><head><title>Relatório - ${denuncia.protocolo}</title><style>body{font-family:Arial,sans-serif;margin:40px;color:#333;line-height:1.6;}h1{color:#1e3a8a;border-bottom:3px solid #1e3a8a;padding-bottom:8px;}h2{color:#1e40af;margin-top:24px;}.info{background:#f0f4ff;padding:16px;border-radius:8px;margin:16px 0;}.photos{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}pre{white-space:pre-wrap;word-wrap:break-word;font-size:13px;background:#f9fafb;padding:16px;border:1px solid #e5e7eb;border-radius:8px;}.footer{margin-top:40px;padding-top:16px;border-top:2px solid #e5e7eb;text-align:center;font-size:11px;color:#999;}@media print{body{margin:20px;}}</style></head><body><h1>🛡️ SIFAU — Relatório de Fiscalização</h1><div class="info"><p><strong>Protocolo:</strong> #${denuncia.protocolo}</p><p><strong>Tipo:</strong> ${denuncia.tipo}</p><p><strong>Endereço:</strong> ${denuncia.endereco}</p><p><strong>Data:</strong> ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'})}</p><p><strong>Fiscal:</strong> ${currentUser?.nome} (${currentUser?.matricula})</p><p><strong>Status:</strong> ${statusLabels[denuncia.status]}</p></div>${osHtml ? `<div style="margin:12px 0;">${osHtml}</div>` : ''}<h2>📋 Relatório Técnico</h2><pre>${textoRelatorio}</pre>${fotosRel.length > 0 ? `<h2>📷 Fotos do Fiscal (${fotosRel.length})</h2><div class="photos">${fotosHtml}</div>` : ''}${assHtml}<div class="footer"><p>Documento gerado pelo SIFAU — Sistema Inteligente de Fiscalização e Atividades Urbanas</p><p>${new Date().toLocaleString('pt-BR')}</p></div></body></html>`);
-                printWindow.document.close();
-                setTimeout(() => printWindow.print(), 500);
+                const html = `<!DOCTYPE html><html><head><title>Relatório - ${denuncia.protocolo}</title><style>body{font-family:Arial,sans-serif;margin:40px;color:#333;line-height:1.6;}h1{color:#1e3a8a;border-bottom:3px solid #1e3a8a;padding-bottom:8px;}h2{color:#1e40af;margin-top:24px;}.info{background:#f0f4ff;padding:16px;border-radius:8px;margin:16px 0;}.photos{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}pre{white-space:pre-wrap;word-wrap:break-word;font-size:13px;background:#f9fafb;padding:16px;border:1px solid #e5e7eb;border-radius:8px;}.footer{margin-top:40px;padding-top:16px;border-top:2px solid #e5e7eb;text-align:center;font-size:11px;color:#999;}@media print{body{margin:20px;}}</style></head><body><h1>🛡️ SIFAU — Relatório de Fiscalização</h1><div class="info"><p><strong>Protocolo:</strong> #${denuncia.protocolo}</p><p><strong>Tipo:</strong> ${denuncia.tipo}</p><p><strong>Endereço:</strong> ${denuncia.endereco}</p><p><strong>Data:</strong> ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'})}</p><p><strong>Fiscal:</strong> ${currentUser?.nome} (${currentUser?.matricula})</p><p><strong>Status:</strong> ${statusLabels[denuncia.status]}</p></div>${osHtml ? `<div style="margin:12px 0;">${osHtml}</div>` : ''}<h2>📋 Relatório Técnico</h2><pre>${textoRelatorio}</pre>${fotosRel.length > 0 ? `<h2>📷 Fotos do Fiscal (${fotosRel.length})</h2><div class="photos">${fotosHtml}</div>` : ''}${assHtml}<div class="footer"><p>Documento gerado pelo SIFAU — Sistema Inteligente de Fiscalização e Atividades Urbanas</p><p>${new Date().toLocaleString('pt-BR')}</p></div></body></html>`;
+                const iframe = document.createElement('iframe');
+                iframe.style.position = 'fixed';
+                iframe.style.right = '0';
+                iframe.style.bottom = '0';
+                iframe.style.width = '0';
+                iframe.style.height = '0';
+                iframe.style.border = '0';
+                document.body.appendChild(iframe);
+                const doc = iframe.contentWindow?.document;
+                if (!doc) return;
+                doc.open();
+                doc.write(html);
+                doc.close();
+                setTimeout(() => {
+                  iframe.contentWindow?.focus();
+                  iframe.contentWindow?.print();
+                  setTimeout(() => document.body.removeChild(iframe), 1000);
+                }, 500);
               }}
               className="w-full bg-slate-700 text-white rounded-xl py-3 md:py-4 font-semibold flex items-center justify-center gap-2 md:text-lg"
             >
@@ -1632,12 +1647,17 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
 }
 
 export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }: { onLogout: () => void; onOpenSettings: () => void; theme: string; profilePhoto?: string }) {
-  const { denuncias, notifications, dismissNotification } = useApp();
+  const { denuncias, notifications, dismissNotification, addNotification } = useApp();
   const [tab, setTab] = useState<'home' | 'processos' | 'pontos' | 'mensagens'>('home');
   const [selectedTask, setSelectedTask] = useState<Denuncia | null>(null);
   const [viewingReport, setViewingReport] = useState<Denuncia | null>(null);
   const { getConversas, currentUser } = useApp();
   const totalUnread = currentUser ? getConversas(currentUser.id).reduce((s, c) => s + c.unread, 0) : 0;
+  const knownTaskIdsRef = useRef<Set<string>>(new Set());
+  const taskWatchBootstrappedRef = useRef(false);
+  const [notificationPermission, setNotificationPermission] = useState<'granted' | 'denied' | 'default' | 'unsupported'>(
+    typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
+  );
 
   // Handle device back button
   useEffect(() => {
@@ -1676,6 +1696,53 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
     setTab(newTab);
   };
 
+  // Notificação sonora + browser para nova tarefa designada
+  useEffect(() => {
+    if (!currentUser) return;
+    const minhasDesignadas = denuncias.filter(d => d.fiscal_id === currentUser.id && d.status === 'designada');
+    const nextIds = new Set(minhasDesignadas.map(d => d.id));
+
+    // Primeira carga: só registra o estado atual para evitar alertas de tarefas antigas
+    if (!taskWatchBootstrappedRef.current) {
+      knownTaskIdsRef.current = nextIds;
+      taskWatchBootstrappedRef.current = true;
+      return;
+    }
+
+    minhasDesignadas.forEach(d => {
+      if (!knownTaskIdsRef.current.has(d.id)) {
+        notifyNewTaskWithAlert(currentUser.nome || 'Fiscal', d.protocolo, d.tipo).catch(() => {});
+      }
+    });
+
+    knownTaskIdsRef.current = nextIds;
+  }, [denuncias, currentUser]);
+
+  const handleEnableNotifications = async () => {
+    const granted = await requestNotificationPermission();
+    if (typeof Notification !== 'undefined') {
+      setNotificationPermission(Notification.permission);
+    } else {
+      setNotificationPermission('unsupported');
+    }
+    if (granted) {
+      addNotification('✅ Notificações ativadas com sucesso.', 'success');
+    } else {
+      addNotification('⚠️ Permissão negada. Ative notificações nas configurações do dispositivo/navegador.', 'warning');
+    }
+  };
+
+  // Fallback interno quando o dispositivo não suporta Notification API
+  useEffect(() => {
+    const handler = (evt: Event) => {
+      const custom = evt as CustomEvent<{ title?: string; body?: string }>;
+      const text = custom.detail?.body || custom.detail?.title || 'Nova atualização do sistema.';
+      addNotification(text, 'info');
+    };
+    window.addEventListener('sifau-inapp-notification', handler as EventListener);
+    return () => window.removeEventListener('sifau-inapp-notification', handler as EventListener);
+  }, [addNotification]);
+
   if (viewingReport) {
     const fresh = denuncias.find(d => d.id === viewingReport.id);
     if (fresh) {
@@ -1699,6 +1766,27 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
 
   return (
     <div className="min-h-screen bg-gray-50 lg:flex">
+      {notificationPermission !== 'granted' && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[120] w-[92%] max-w-xl rounded-xl border border-amber-300 bg-amber-50 shadow-lg p-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-amber-800">Ative notificações do fiscal</p>
+            <p className="text-xs text-amber-700">
+              {notificationPermission === 'unsupported'
+                ? 'Seu dispositivo não expõe Notification API. O app usará alertas internos com som e vibração.'
+                : 'Para receber alerta no celular quando houver nova tarefa designada.'}
+            </p>
+          </div>
+          {notificationPermission !== 'unsupported' && (
+            <button
+              onClick={handleEnableNotifications}
+              className="shrink-0 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-amber-950 text-xs font-semibold"
+            >
+              Ativar
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Notifications */}
       <AnimatePresence>
         {notifications.map(n => (
