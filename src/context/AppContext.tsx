@@ -624,13 +624,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ? { ...d, fiscal_id: fiscalId, gerente_id: currentUser?.id, status: 'designada' as DenunciaStatus, pontos_provisorio: pontosProvisorio, updated_at: new Date().toISOString() }
         : d
     ));
+    let synced = true;
     if (isOnline) {
       const synced = await supa.updateDenuncia(denunciaId, {
+      synced = await supa.updateDenuncia(denunciaId, {
         fiscal_id: fiscalId, gerente_id: currentUser?.id,
         status: 'designada', pontos_provisorio: pontosProvisorio,
       });
       if (!synced) {
         addNotification('⚠️ Designação salva no app, mas não sincronizou com o servidor. Verifique conexão/permissões.', 'warning');
+        addNotification('⚠️ Não foi possível sincronizar a designação com o servidor. Verifique a conexão/permissões.', 'warning');
       }
     }
 
@@ -673,6 +676,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     addNotification(`Designada para ${fiscal?.nome || 'fiscal'} com ${pontosProvisorio} pts creditados!`, 'success');
     return true;
+    return synced;
   }, [currentUser, isOnline, addNotification, profiles, denuncias]);
 
   // ═══ RELATÓRIOS ═══

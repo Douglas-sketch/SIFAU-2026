@@ -197,6 +197,9 @@ function DesignarView({ denuncia, onBack }: { denuncia: Denuncia; onBack: () => 
     setDesignando(true);
     await designarDenuncia(denuncia.id, selectedFiscal, totalPontos);
     setDesignando(false);
+    const ok = await designarDenuncia(denuncia.id, selectedFiscal, totalPontos);
+    setDesignando(false);
+    if (!ok) return;
     setShowSuccess(true);
     setTimeout(() => { setShowSuccess(false); onBack(); }, 2000);
   };
