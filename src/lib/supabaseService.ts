@@ -227,12 +227,18 @@ export async function createDenuncia(d: Denuncia): Promise<Denuncia | null> {
   } catch (e: any) { addLog(`❌ Exceção criar denúncia: ${e?.message}`); return null; }
 }
 
-export async function updateDenuncia(id: string, updates: Partial<Record<string, any>>): Promise<void> {
-  if (!ok()) return;
+export async function updateDenuncia(id: string, updates: Partial<Record<string, any>>): Promise<boolean> {
+  if (!ok()) return false;
   try {
     const { error } = await supabase!.from('denuncias').update(updates).eq('id', id);
-    if (error) addLog(`❌ Erro update denúncia: ${error.message}`);
-  } catch { /* */ }
+    if (error) {
+      addLog(`❌ Erro update denúncia: ${error.message}`);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ============================================

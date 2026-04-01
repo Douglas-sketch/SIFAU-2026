@@ -25,7 +25,7 @@ interface AppState {
   logout: () => void;
   addDenuncia: (d: Omit<Denuncia, 'id' | 'protocolo' | 'created_at' | 'updated_at'>) => Denuncia;
   updateDenunciaStatus: (id: string, status: DenunciaStatus, extra?: Partial<Denuncia>) => void;
-  designarDenuncia: (denunciaId: string, fiscalId: string, pontosProvisorio: number) => void;
+  designarDenuncia: (denunciaId: string, fiscalId: string, pontosProvisorio: number) => Promise<boolean>;
   upsertRelatorio: (r: Omit<Relatorio, 'id' | 'created_at'>) => void;
   addAuto: (a: Omit<AutoInfracao, 'id' | 'created_at'>) => void;
   aprovarRelatorio: (denunciaId: string) => void;
@@ -618,17 +618,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [isOnline]);
 
-  const designarDenuncia = useCallback((denunciaId: string, fiscalId: string, pontosProvisorio: number) => {
+  const designarDenuncia = useCallback(async (denunciaId: string, fiscalId: string, pontosProvisorio: number): Promise<boolean> => {
     setDenuncias(prev => prev.map(d =>
       d.id === denunciaId
         ? { ...d, fiscal_id: fiscalId, gerente_id: currentUser?.id, status: 'designada' as DenunciaStatus, pontos_provisorio: pontosProvisorio, updated_at: new Date().toISOString() }
         : d
     ));
+    let synced = true;
     if (isOnline) {
-      supa.updateDenuncia(denunciaId, {
+      synced = await supa.updateDenuncia(denunciaId, {
         fiscal_id: fiscalId, gerente_id: currentUser?.id,
         status: 'designada', pontos_provisorio: pontosProvisorio,
       });
+      if (!synced) {
+        addNotification('⚠️ Não foi possível sincronizar a designação com o servidor. Verifique a conexão/permissões.', 'warning');
+      }
     }
 
     // ═══ PONTOS CREDITADOS IMEDIATAMENTE NA DESIGNAÇÃO ═══
@@ -669,6 +673,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     addNotification(`Designada para ${fiscal?.nome || 'fiscal'} com ${pontosProvisorio} pts creditados!`, 'success');
+    return synced;
   }, [currentUser, isOnline, addNotification, profiles, denuncias]);
 
   // ═══ RELATÓRIOS ═══

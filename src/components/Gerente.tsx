@@ -182,18 +182,22 @@ function DesignarView({ denuncia, onBack }: { denuncia: Denuncia; onBack: () => 
   const [selectedFiscal, setSelectedFiscal] = useState(denuncia.fiscal_id || '');
   const [osSelections, setOsSelections] = useState<Record<string, number>>({});
   const [showSuccess, setShowSuccess] = useState(false);
+  const [designando, setDesignando] = useState(false);
 
   const totalPontos = Object.entries(osSelections).reduce((acc, [codigo, qty]) => {
     const os = OS_TABLE.find(o => o.codigo === codigo);
     return acc + (os ? os.pontos * qty : 0);
   }, 0);
 
-  const handleDesignar = () => {
+  const handleDesignar = async () => {
     if (!selectedFiscal) {
       addNotification('Selecione um fiscal!', 'warning');
       return;
     }
-    designarDenuncia(denuncia.id, selectedFiscal, totalPontos);
+    setDesignando(true);
+    const ok = await designarDenuncia(denuncia.id, selectedFiscal, totalPontos);
+    setDesignando(false);
+    if (!ok) return;
     setShowSuccess(true);
     setTimeout(() => { setShowSuccess(false); onBack(); }, 2000);
   };
@@ -325,10 +329,10 @@ function DesignarView({ denuncia, onBack }: { denuncia: Denuncia; onBack: () => 
 
           <button
             onClick={handleDesignar}
-            disabled={!selectedFiscal}
+            disabled={!selectedFiscal || designando}
             className="w-full bg-indigo-700 text-white rounded-xl py-4 md:py-5 font-bold text-lg md:text-xl disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            <User size={20} /> Designar Fiscal
+            <User size={20} /> {designando ? 'Designando...' : 'Designar Fiscal'}
           </button>
         </div>
       </div>
