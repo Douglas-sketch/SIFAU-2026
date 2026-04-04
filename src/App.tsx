@@ -97,8 +97,6 @@ function accountExistsLocal(email: string): boolean {
   return !!db[email.toLowerCase().trim()];
 }
 
-function clearSession() {}
-
 function getSession(): string | null {
   try {
     const s = JSON.parse(localStorage.getItem(AUTH_SESSION) || 'null');
