@@ -623,6 +623,65 @@ export async function userAccountExists(email: string): Promise<boolean> {
   }
 }
 
+export async function listRegisteredAccounts(): Promise<Array<{
+  email: string;
+  provider?: string | null;
+  access_type?: 'denunciante' | 'servidor' | null;
+  server_type?: 'fiscal' | 'gerente' | null;
+}>> {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase
+      .from('user_accounts')
+      .select('email, provider, access_type, server_type')
+      .order('email', { ascending: true });
+    if (!error && data) return data as Array<{ email: string; provider?: string | null; access_type?: 'denunciante' | 'servidor' | null; server_type?: 'fiscal' | 'gerente' | null }>;
+  } catch {
+    // fallback below
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('app_users')
+      .select('email, provider')
+      .order('email', { ascending: true });
+    if (error || !data) return [];
+    return (data as Array<{ email: string; provider?: string | null }>).map((row) => ({
+      email: row.email,
+      provider: row.provider || 'email',
+      access_type: 'denunciante',
+      server_type: null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function getAccountAccessByEmail(email: string): Promise<{
+  accessType: 'denunciante' | 'servidor';
+  serverType: 'fiscal' | 'gerente' | null;
+}> {
+  if (!supabase || !email) {
+    return { accessType: 'denunciante', serverType: null };
+  }
+  try {
+    const clean = email.toLowerCase().trim();
+    const { data } = await supabase
+      .from('user_accounts')
+      .select('access_type, server_type')
+      .eq('email', clean)
+      .maybeSingle();
+
+    const accessType = data?.access_type === 'servidor' ? 'servidor' : 'denunciante';
+    const serverType = data?.server_type === 'gerente' || data?.server_type === 'fiscal'
+      ? data.server_type
+      : null;
+    return { accessType, serverType };
+  } catch {
+    return { accessType: 'denunciante', serverType: null };
+  }
+}
+
 // ============================================
 // MAPPERS
 // ============================================
