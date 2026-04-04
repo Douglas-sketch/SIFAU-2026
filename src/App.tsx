@@ -16,6 +16,7 @@ const THEME_GRADIENTS: Record<AppTheme, string> = {
   default: 'from-blue-800 via-blue-900 to-slate-900',
   dark: 'from-gray-800 via-gray-900 to-black',
 };
+type AccessType = 'denunciante' | 'servidor';
 
 // ═══════════════════════════════════════════════════════════════
 //  SISTEMA DE CONTAS — Supabase-first
@@ -97,8 +98,6 @@ function accountExistsLocal(email: string): boolean {
   return !!db[email.toLowerCase().trim()];
 }
 
-function clearSession() {}
-
 function getSession(): string | null {
   try {
     const s = JSON.parse(localStorage.getItem(AUTH_SESSION) || 'null');
@@ -112,12 +111,14 @@ function clearSession() {
   // DON'T remove ACCOUNTS_DB — keep saved accounts
 }
 
-function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: string) => void; theme: AppTheme }) {
+function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: string, role?: AccessType) => void; theme: AppTheme }) {
+  const supabaseStatus = getSupabaseConfigStatus();
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [, setGoogleLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [accessType, setAccessType] = useState<AccessType>('denunciante');
   const [serverType, setServerType] = useState<'fiscal' | 'gerente'>('fiscal');
@@ -153,16 +154,23 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         }
 
         const msg = (authError.message || '').toLowerCase();
+        const localResult = await checkAccount(e, p);
+        if (localResult === 'ok') {
+          finishAuth(e);
+          return;
+        }
         if (msg.includes('invalid login credentials')) {
-          setError('E-mail ou senha incorretos. Verifique seus dados.');
+          setError(localResult === 'wrong_password'
+            ? 'Senha incorreta. Tente novamente.'
+            : 'E-mail ou senha incorretos. Verifique seus dados.');
           return;
         }
         if (msg.includes('email not confirmed')) {
-          setError('Confirme seu e-mail para entrar na conta.');
+          setError('Conta criada, mas o servidor exigiu confirmação de e-mail. Use seu login normalmente no app; se persistir, tente novamente em instantes.');
           return;
         }
 
-        setError('Não foi possível entrar agora. Tente novamente em instantes.');
+        setError('Não foi possível entrar no servidor agora. Verifique internet e tente novamente.');
         return;
       }
 
@@ -218,19 +226,20 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
             setError('Este e-mail já está cadastrado. Faça login.');
             return;
           }
-          setError('Não foi possível criar a conta agora. Tente novamente.');
+          await saveAccount(e, p);
+          setSuccess('Conta criada no app com sucesso! Se o servidor estiver indisponível, a sincronização ocorrerá depois.');
+          finishAuth(e, 'email', undefined, accessType);
           return;
         }
 
         await saveAccount(e, p);
-        if (data?.session) {
-          finishAuth(e);
-        } else {
-          setSuccess('Conta criada com sucesso! Se necessário, confirme seu e-mail para entrar.');
-          setMode('login');
-          setPassword('');
-          setConfirmPassword('');
+        if (!data?.session) {
+          const { error: signInError } = await supabase.auth.signInWithPassword({ email: e, password: p });
+          if (signInError) {
+            console.warn('⚠️ Sign-in imediato após cadastro falhou, seguindo com sessão local:', signInError.message);
+          }
         }
+        finishAuth(e, 'email', undefined, accessType);
         return;
       }
 
@@ -334,17 +343,6 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
             setGoogleLoading(false);
           }
         }
-        if (accessType === 'servidor' && createdMatricula) {
-          setGeneratedMatricula(createdMatricula);
-          setPendingServerAuth({ email: e, role: accessType });
-          setSuccess(`Conta de servidor criada com sucesso!${serverMsg}`);
-          setPassword('');
-          setConfirmPassword('');
-          return;
-        }
-
-        finishAuth(e, 'email', undefined, accessType);
-        return;
       }
       setError('Supabase não configurado para cadastro.');
     } catch (_error) {
@@ -380,21 +378,6 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
       setError(e?.message || 'Erro ao enviar e-mail de recuperação.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleLoadRegisteredAccounts = async () => {
-    setLoadingAccounts(true);
-    try {
-      const rows = await supa.listRegisteredAccounts();
-      setRegisteredAccounts(rows);
-      if (!rows.length) {
-        setError('Nenhuma conta encontrada em user_accounts/app_users neste projeto.');
-      } else {
-        setError('');
-      }
-    } finally {
-      setLoadingAccounts(false);
     }
   };
 

@@ -625,13 +625,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ));
     let synced = true;
     if (isOnline) {
-      const synced = await supa.updateDenuncia(denunciaId, {
       synced = await supa.updateDenuncia(denunciaId, {
         fiscal_id: fiscalId, gerente_id: currentUser?.id,
         status: 'designada', pontos_provisorio: pontosProvisorio,
       });
       if (!synced) {
-        addNotification('⚠️ Designação salva no app, mas não sincronizou com o servidor. Verifique conexão/permissões.', 'warning');
         addNotification('⚠️ Não foi possível sincronizar a designação com o servidor. Verifique a conexão/permissões.', 'warning');
       }
     }
@@ -928,64 +926,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addNotification('Denúncia atualizada com sucesso.', 'success');
     return true;
   }, [authEmail, denuncias, isOnline, addNotification]);
-
-
-
-
-  const editMinhaDenuncia = useCallback((id: string, updates: { tipo?: Denuncia['tipo']; endereco?: string; descricao?: string; denunciante_nome?: string }) => {
-    const cleanEmail = (authEmail || getAuthEmail() || 'anonymous').toLowerCase();
-    const alvo = denuncias.find(d => d.id === id);
-    if (!alvo) return false;
-    if (cleanEmail === 'anonymous' || (alvo.auth_email && alvo.auth_email.toLowerCase() !== cleanEmail)) return false;
-    if (['aguardando_aprovacao', 'concluida'].includes(alvo.status)) return false;
-
-    const changed: string[] = [];
-    if (updates.tipo && updates.tipo !== alvo.tipo) changed.push(`tipo: "${alvo.tipo}" → "${updates.tipo}"`);
-    if (updates.endereco && updates.endereco.trim() !== alvo.endereco) changed.push('endereço atualizado');
-    if (updates.descricao && updates.descricao.trim() !== alvo.descricao) changed.push('descrição atualizada');
-    if ((updates.denunciante_nome || '') !== (alvo.denunciante_nome || '')) changed.push('nome do denunciante atualizado');
-    if (!changed.length) return false;
-
-    const now = new Date().toISOString();
-    const patch: Partial<Denuncia> = {
-      tipo: updates.tipo || alvo.tipo,
-      endereco: updates.endereco?.trim() || alvo.endereco,
-      descricao: updates.descricao?.trim() || alvo.descricao,
-      denunciante_nome: updates.denunciante_nome?.trim() || alvo.denunciante_nome,
-      updated_at: now,
-    };
-
-    setDenuncias(prev => prev.map(d => d.id === id ? { ...d, ...patch } : d));
-
-    if (isOnline) {
-      const descWithMatricula = alvo.denunciante_matricula
-        ? `[MATRICULA:${alvo.denunciante_matricula}] ${patch.descricao || ''}`.trim()
-        : patch.descricao;
-      supa.updateDenuncia(id, {
-        tipo: patch.tipo,
-        endereco: patch.endereco,
-        descricao: descWithMatricula,
-        denunciante_nome: patch.denunciante_nome,
-        updated_at: now,
-      });
-    }
-
-    const hist: HistoricoAtividade = {
-      id: `hist-${Date.now()}-edit-cid`,
-      fiscal_id: `cid-${cleanEmail}`,
-      denuncia_id: id,
-      tipo_acao: 'Denúncia Editada',
-      pontos: 0,
-      descricao: changed.join('; '),
-      created_at: now,
-    };
-    setHistorico(prev => [hist, ...prev]);
-    if (isOnline) supa.createHistorico(hist);
-
-    addNotification('Denúncia atualizada com sucesso.', 'success');
-    return true;
-  }, [authEmail, denuncias, isOnline, addNotification]);
-
 
   return (
     <AppContext.Provider value={{
