@@ -5,10 +5,11 @@ import CidadaoModule from './components/Cidadao';
 import FiscalModule from './components/Fiscal';
 import GerenteModule from './components/Gerente';
 import Settings, { AppTheme, applyTheme, applyAccessibility, loadSettings } from './components/Settings';
-import { Lock, ArrowLeft, AlertCircle, ChevronDown, Eye, EyeOff, Mail, Users, LogIn, UserPlus, Loader2 } from 'lucide-react';
-import { supabase } from './lib/supabase';
+import { Lock, ArrowLeft, AlertCircle, ChevronDown, Eye, EyeOff, Mail, Users, LogIn, UserPlus, Loader2, BadgeCheck } from 'lucide-react';
+import { supabase, getSupabaseConfigStatus } from './lib/supabase';
 import * as supa from './lib/supabaseService';
 import { getProfilePhoto } from './lib/profilePhoto';
+import { requestEssentialPermissions } from './lib/appPermissions';
 import Logo from './components/Logo';
 
 const THEME_GRADIENTS: Record<AppTheme, string> = {
@@ -17,7 +18,7 @@ const THEME_GRADIENTS: Record<AppTheme, string> = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-//  SISTEMA DE CONTAS — 100% Local-first + Supabase backup
+//  SISTEMA DE CONTAS — Supabase-first
 // ═══════════════════════════════════════════════════════════════
 const ACCOUNTS_DB = 'sifau_accounts_v3';
 const AUTH_SESSION = 'sifau_session_v3';
@@ -96,11 +97,7 @@ function accountExistsLocal(email: string): boolean {
   return !!db[email.toLowerCase().trim()];
 }
 
-function saveSession(email: string) {
-  localStorage.setItem(AUTH_SESSION, JSON.stringify({ email, ts: Date.now() }));
-  // CRITICAL: Also save to AUTH_EMAIL_KEY so AppContext can read it
-  localStorage.setItem(AUTH_EMAIL_KEY, email.toLowerCase().trim());
-}
+function clearSession() {}
 
 function getSession(): string | null {
   try {
@@ -122,16 +119,18 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
+  const [accessType, setAccessType] = useState<AccessType>('denunciante');
+  const [serverType, setServerType] = useState<'fiscal' | 'gerente'>('fiscal');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [generatedMatricula, setGeneratedMatricula] = useState<string | null>(null);
+  const [pendingServerAuth, setPendingServerAuth] = useState<{ email: string; role: AccessType } | null>(null);
 
-  const finishAuth = (userEmail: string, provider: string = 'email') => {
+  const finishAuth = (userEmail: string, _provider: string = 'email', _userPassword?: string, profileType?: AccessType) => {
     const cleanEmail = userEmail.toLowerCase().trim();
-    saveSession(cleanEmail);
-    supa.registerUserAccount(cleanEmail, provider).catch(() => {});
+    const resolvedType = profileType || 'denunciante';
     console.log('✅ Auth completo:', cleanEmail);
-    onAuthenticated(cleanEmail);
+    onAuthenticated(cleanEmail, resolvedType);
   };
 
   const handleEmailLogin = async () => {
@@ -334,15 +333,24 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
             setError('Erro ao conectar com Google: ' + authError.message);
             setGoogleLoading(false);
           }
-          // If no error, browser will redirect to Google login page
         }
-      } else {
-        setError('Google login requer conexão com o servidor.');
-        setGoogleLoading(false);
+        if (accessType === 'servidor' && createdMatricula) {
+          setGeneratedMatricula(createdMatricula);
+          setPendingServerAuth({ email: e, role: accessType });
+          setSuccess(`Conta de servidor criada com sucesso!${serverMsg}`);
+          setPassword('');
+          setConfirmPassword('');
+          return;
+        }
+
+        finishAuth(e, 'email', undefined, accessType);
+        return;
       }
-    } catch (e: any) {
-      setError(e?.message || 'Erro ao conectar com Google.');
-      setGoogleLoading(false);
+      setError('Supabase não configurado para cadastro.');
+    } catch (_error) {
+      setError('Erro ao criar conta. Tente novamente.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -366,17 +374,27 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           setTimeout(() => { setMode('login'); setSuccess(''); }, 4000);
         }
       } else {
-        // Verificar se existe localmente
-        if (checkAccount(trimmedEmail, '') !== 'not_found') {
-          setSuccess('Modo offline. Sua conta existe localmente. Tente lembrar a senha ou contate o administrador.');
-        } else {
-          setError('Conta não encontrada.');
-        }
+        setError('Recuperação de senha indisponível sem Supabase.');
       }
     } catch (e: any) {
       setError(e?.message || 'Erro ao enviar e-mail de recuperação.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLoadRegisteredAccounts = async () => {
+    setLoadingAccounts(true);
+    try {
+      const rows = await supa.listRegisteredAccounts();
+      setRegisteredAccounts(rows);
+      if (!rows.length) {
+        setError('Nenhuma conta encontrada em user_accounts/app_users neste projeto.');
+      } else {
+        setError('');
+      }
+    } finally {
+      setLoadingAccounts(false);
     }
   };
 
@@ -411,7 +429,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
             {mode !== 'forgot' && (
               <div className="flex bg-white/5 rounded-xl p-1 mb-5">
                 <button
-                  onClick={() => { setMode('login'); setError(''); setSuccess(''); }}
+                  onClick={() => { setMode('login'); setError(''); setSuccess(''); setGeneratedMatricula(null); setPendingServerAuth(null); }}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
                     mode === 'login' ? 'bg-blue-600 text-white shadow-lg' : 'text-white/60 hover:text-white/80'
                   }`}
@@ -419,7 +437,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                   <LogIn size={16} /> Entrar
                 </button>
                 <button
-                  onClick={() => { setMode('register'); setError(''); setSuccess(''); }}
+                  onClick={() => { setMode('register'); setError(''); setSuccess(''); setGeneratedMatricula(null); setPendingServerAuth(null); }}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
                     mode === 'register' ? 'bg-blue-600 text-white shadow-lg' : 'text-white/60 hover:text-white/80'
                   }`}
@@ -452,6 +470,14 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
               >
                 <AlertCircle size={16} className="shrink-0" /> {error}
               </motion.div>
+            )}
+
+            {!supabaseStatus.configured && (
+              <div className="bg-amber-500/20 border border-amber-400/30 rounded-xl p-3 text-amber-100 text-xs mb-4">
+                Supabase não configurado neste build. Defina <strong>VITE_SUPABASE_URL</strong> e <strong>VITE_SUPABASE_ANON_KEY</strong> no build
+                ou configure em <code>public/runtime-config.js</code> (window.__SIFAU_SUPABASE_URL / window.__SIFAU_SUPABASE_ANON_KEY)
+                ou salve no localStorage as chaves <code>sifau_supabase_url</code> e <code>sifau_supabase_anon_key</code>.
+              </div>
             )}
 
             {/* Success */}
@@ -525,6 +551,38 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                 </div>
               )}
 
+              {mode === 'register' && accessType === 'servidor' && (
+                <div>
+                  <label className="text-xs text-blue-200/80 mb-1 block">Perfil de servidor</label>
+                  <select
+                    value={serverType}
+                    onChange={e => setServerType(e.target.value as 'fiscal' | 'gerente')}
+                    className="w-full bg-white/10 border border-white/15 rounded-xl px-3 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm"
+                  >
+                    <option value="fiscal" className="text-black">Fiscal</option>
+                    <option value="gerente" className="text-black">Gerente</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Access Type */}
+              {mode === 'register' && (
+                <div>
+                  <label className="text-xs text-blue-200/80 mb-1 block">Tipo de acesso</label>
+                  <select
+                    value={accessType}
+                    onChange={e => setAccessType(e.target.value as AccessType)}
+                    className="w-full bg-white/10 border border-white/15 rounded-xl px-3 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm"
+                  >
+                    <option value="denunciante" className="text-black">Apenas Denunciante</option>
+                    <option value="servidor" className="text-black">Servidor (Fiscal/Gerente)</option>
+                  </select>
+                  <p className="text-[11px] text-blue-200/70 mt-1">
+                    Denunciantes usam o módulo cidadão. Servidores também podem acessar área restrita com matrícula e senha.
+                  </p>
+                </div>
+              )}
+
               {/* Submit button */}
               <button
                 onClick={mode === 'forgot' ? handleForgotPassword : mode === 'login' ? handleEmailLogin : handleEmailRegister}
@@ -541,6 +599,27 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                   </>
                 )}
               </button>
+
+              {generatedMatricula && (
+                <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/15 p-4 text-emerald-100">
+                  <div className="flex items-center gap-2 mb-1">
+                    <BadgeCheck size={16} className="text-emerald-300" />
+                    <span className="text-xs font-semibold uppercase tracking-wide">Matrícula gerada</span>
+                  </div>
+                  <p className="text-2xl font-black tracking-wider text-white">{generatedMatricula}</p>
+                  <p className="text-[11px] text-emerald-100/80 mt-1">
+                    Guarde esta matrícula para acesso da área de servidor.
+                  </p>
+                  {pendingServerAuth && (
+                    <button
+                      onClick={() => finishAuth(pendingServerAuth.email, 'email', undefined, pendingServerAuth.role)}
+                      className="mt-3 w-full rounded-lg bg-emerald-500/80 hover:bg-emerald-400 text-emerald-950 font-semibold py-2 text-sm transition"
+                    >
+                      Entrar agora como servidor
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Forgot password link */}
               {mode === 'login' && (
@@ -563,35 +642,6 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
               )}
             </div>
 
-            {/* Divider */}
-            {mode !== 'forgot' && (
-              <div className="flex items-center gap-3 my-4">
-                <div className="flex-1 h-px bg-white/10"></div>
-                <span className="text-white/30 text-xs">ou</span>
-                <div className="flex-1 h-px bg-white/10"></div>
-              </div>
-            )}
-
-            {/* Google Login */}
-            {mode !== 'forgot' && (
-              <button
-                onClick={handleGoogleLogin}
-                disabled={googleLoading}
-                className="w-full bg-white/10 hover:bg-white/15 border border-white/15 text-white rounded-xl py-3 font-medium transition flex items-center justify-center gap-3 text-sm"
-              >
-                {googleLoading ? (
-                  <Loader2 size={18} className="animate-spin" />
-                ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24">
-                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
-                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                  </svg>
-                )}
-                {googleLoading ? 'Conectando...' : 'Continuar com Google'}
-              </button>
-            )}
           </motion.div>
 
           {/* Footer info */}
@@ -977,12 +1027,14 @@ function LoginScreen({ onBack, onSuccess, theme }: { onBack: () => void; onSucce
 // ═══════════════════════════════════════════════════════════════
 //  HOME SCREEN (Cidadão ou Servidor)
 // ═══════════════════════════════════════════════════════════════
-function HomeScreen({ onLogin, onCidadao, onOpenSettings, onLogoutAuth, theme }: { 
+function HomeScreen({ onLogin, onCidadao, onOpenSettings, onLogoutAuth, theme, canAccessServer, warning }: { 
   onLogin: () => void; 
   onCidadao: () => void; 
   onOpenSettings: () => void;
   onLogoutAuth: () => void;
   theme: AppTheme;
+  canAccessServer: boolean;
+  warning?: string;
 }) {
   return (
     <motion.div
@@ -1033,7 +1085,11 @@ function HomeScreen({ onLogin, onCidadao, onOpenSettings, onLogoutAuth, theme }:
             {/* Server button */}
             <button
               onClick={onLogin}
-              className="w-full bg-blue-600/80 backdrop-blur border border-blue-500/30 hover:bg-blue-600 text-white rounded-2xl py-4 md:py-5 px-6 transition group"
+              className={`w-full backdrop-blur border rounded-2xl py-4 md:py-5 px-6 transition group ${
+                canAccessServer
+                  ? 'bg-blue-600/80 border-blue-500/30 hover:bg-blue-600 text-white'
+                  : 'bg-slate-700/60 border-slate-500/20 text-slate-300 cursor-not-allowed'
+              }`}
             >
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center group-hover:bg-white/20 transition">
@@ -1041,11 +1097,20 @@ function HomeScreen({ onLogin, onCidadao, onOpenSettings, onLogoutAuth, theme }:
                 </div>
                 <div className="text-left flex-1">
                   <p className="font-bold text-base md:text-lg">Sou Servidor</p>
-                  <p className="text-xs md:text-sm text-blue-200/80">Fiscal ou Gerente — Login necessário</p>
+                  <p className="text-xs md:text-sm text-blue-200/80">
+                    {canAccessServer
+                      ? 'Fiscal ou Gerente — Login necessário'
+                      : 'Disponível somente para contas com perfil Servidor'}
+                  </p>
                 </div>
                 <ChevronDown size={20} className="text-white/40 -rotate-90" />
               </div>
             </button>
+            {!!warning && (
+              <div className="bg-amber-500/20 border border-amber-400/30 rounded-xl p-3 text-amber-100 text-xs text-left">
+                {warning}
+              </div>
+            )}
           </motion.div>
 
           {/* Footer */}
@@ -1085,6 +1150,8 @@ function HomeScreen({ onLogin, onCidadao, onOpenSettings, onLogoutAuth, theme }:
 function AppContent() {
   const { currentUser, logout, setAuthEmail, authEmail } = useApp();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null); // null = checking
+  const [accessType, setAccessType] = useState<AccessType>('denunciante');
+  const [homeError, setHomeError] = useState('');
   const [screen, setScreen] = useState<'home' | 'login' | 'cidadao'>(() => {
     // Restaurar tela salva para não voltar à home
     const saved = sessionStorage.getItem('sifau_screen');
@@ -1105,48 +1172,49 @@ function AppContent() {
     if (settings.theme) setTheme(settings.theme);
 
     async function checkAuth() {
-      // 1. Verificar sessão local salva
-      const savedEmail = getSession();
-      if (savedEmail) {
-        console.log('🔄 Sessão restaurada:', savedEmail);
-        setAuthEmail(savedEmail);
-        supa.registerUserAccount(savedEmail, 'session').catch(() => {});
-        setIsAuthenticated(true);
-        return;
-      }
-      
-      // 2. Verificar sessão Supabase Auth (Google OAuth redirect)
+      // Verificar sessão Supabase Auth
       if (supabase) {
         try {
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.user?.email) {
             const sessionEmail = session.user.email;
             console.log('🔄 Sessão Supabase restaurada:', sessionEmail);
-            saveSession(sessionEmail);
+            const roleInfo = await supa.getAccountAccessByEmail(sessionEmail);
             setAuthEmail(sessionEmail);
-            supa.registerUserAccount(sessionEmail, 'google').catch(() => {});
+            setAccessType(roleInfo.accessType);
+            supa.registerUserAccount(sessionEmail, 'session', undefined, {
+              accessType: roleInfo.accessType,
+              serverType: roleInfo.serverType,
+            }).catch(() => {});
             setIsAuthenticated(true);
             return;
           }
         } catch { /* continue */ }
       }
       
-      // 3. Nenhuma sessão encontrada
       setIsAuthenticated(false);
     }
 
     checkAuth();
 
-    // Listen for auth state changes (Google OAuth redirect)
+    // Listen for auth state changes
     if (supabase) {
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         if (session?.user?.email) {
           const sessionEmail = session.user.email;
-          setAuthEmail(sessionEmail);
-          saveSession(sessionEmail);
-          saveAccount(sessionEmail, 'google-auth');
-          supa.registerUserAccount(sessionEmail, session.user?.app_metadata?.provider || 'google').catch(() => {});
-          setIsAuthenticated(true);
+          supa.getAccountAccessByEmail(sessionEmail).then((roleInfo) => {
+            setAuthEmail(sessionEmail);
+            setAccessType(roleInfo.accessType);
+            supa.registerUserAccount(sessionEmail, session.user?.app_metadata?.provider || 'email', undefined, {
+              accessType: roleInfo.accessType,
+              serverType: roleInfo.serverType,
+            }).catch(() => {});
+            setIsAuthenticated(true);
+          }).catch(() => {
+            setAuthEmail(sessionEmail);
+            setAccessType('denunciante');
+            setIsAuthenticated(true);
+          });
         }
       });
       return () => subscription.unsubscribe();
@@ -1218,11 +1286,27 @@ function AppContent() {
     applyTheme(theme);
   }, [theme]);
 
+  // Request essential runtime permissions once per authenticated session
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const permissionsKey = 'sifau_permissions_requested_v1';
+    if (sessionStorage.getItem(permissionsKey) === '1') return;
+
+    sessionStorage.setItem(permissionsKey, '1');
+    requestEssentialPermissions()
+      .then((result) => {
+        console.log('🔐 Permissões solicitadas:', result);
+      })
+      .catch(() => {
+        console.warn('⚠️ Não foi possível solicitar permissões essenciais agora.');
+      });
+  }, [isAuthenticated]);
+
   const handleLogoutAuth = async () => {
     if (supabase) {
       try { await supabase.auth.signOut(); } catch { /* ignore */ }
     }
-    // Remover sessão ativa mas NÃO as credenciais salvas (sifau_accounts_v2)
     clearSession();
     sessionStorage.removeItem('sifau_screen');
     setIsAuthenticated(false);
@@ -1254,8 +1338,9 @@ function AppContent() {
       <AnimatePresence mode="wait">
         <AuthScreen
           key="auth"
-          onAuthenticated={(email?: string) => {
+          onAuthenticated={(email?: string, role?: AccessType) => {
             if (email) setAuthEmail(email);
+            if (role) setAccessType(role);
             setIsAuthenticated(true);
           }}
           theme={theme}
@@ -1328,6 +1413,24 @@ function AppContent() {
 
   // Login screen
   if (screen === 'login') {
+    if (accessType !== 'servidor') {
+      return (
+        <AnimatePresence mode="wait">
+          <HomeScreen
+            key="home-locked"
+            onLogin={() => {
+              setHomeError('Seu perfil é apenas denunciante. Para acessar área restrita, entre com uma conta de servidor.');
+            }}
+            onCidadao={() => navigateTo('cidadao')}
+            onOpenSettings={openSettings}
+            onLogoutAuth={handleLogoutAuth}
+            theme={theme}
+            canAccessServer={false}
+            warning={homeError || 'Seu cadastro atual é apenas denunciante.'}
+          />
+        </AnimatePresence>
+      );
+    }
     return (
       <AnimatePresence mode="wait">
         <LoginScreen
@@ -1360,11 +1463,20 @@ function AppContent() {
     <AnimatePresence mode="wait">
       <HomeScreen
         key="home"
-        onLogin={() => navigateTo('login')}
+        onLogin={() => {
+          if (accessType !== 'servidor') {
+            setHomeError('Seu perfil é apenas denunciante. Cadastre-se como Servidor para usar matrícula/senha.');
+            return;
+          }
+          setHomeError('');
+          navigateTo('login');
+        }}
         onCidadao={() => navigateTo('cidadao')}
         onOpenSettings={openSettings}
         onLogoutAuth={handleLogoutAuth}
         theme={theme}
+        canAccessServer={accessType === 'servidor'}
+        warning={homeError}
       />
     </AnimatePresence>
   );

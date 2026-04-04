@@ -35,38 +35,43 @@ export async function checkConnection(): Promise<boolean> {
 
   try {
     addLog('🔍 Testando conexão...');
-    
-    // Step 1: Simple fetch test to see if the URL is reachable
-    const { data, error } = await supabase
+
+    // Preferir user_accounts (contas de e-mail), com fallback para profiles.
+    const { data: uaData, error: uaError } = await supabase
+      .from('user_accounts')
+      .select('id, email')
+      .limit(1);
+
+    if (!uaError) {
+      addLog(`✅ Supabase OK via user_accounts (${uaData?.length || 0} registro(s) lido(s)).`);
+      supabaseReady = true;
+      return true;
+    }
+
+    const { data: pfData, error: pfError } = await supabase
       .from('profiles')
       .select('id, nome')
       .limit(1);
 
-    if (error) {
-      addLog(`❌ Erro: ${error.message}`);
-      if (error.code === '42P01' || error.message.includes('relation')) {
-        addLog('⚠️ TABELAS NÃO EXISTEM! Execute o SQL no Supabase.');
-      }
-      if (error.message.includes('FetchError') || error.message.includes('fetch')) {
-        addLog('⚠️ Servidor não acessível. Verifique a URL.');
-      }
-      if (error.message.includes('JWT') || error.message.includes('apikey')) {
-        addLog('⚠️ Chave API inválida.');
-      }
-      supabaseReady = false;
-      return false;
+    if (!pfError) {
+      addLog(`✅ Supabase OK via profiles (${pfData?.length || 0} registro(s) lido(s)).`);
+      supabaseReady = true;
+      return true;
     }
 
-    if (!data || data.length === 0) {
-      addLog('⚠️ Conexão OK mas tabela profiles está VAZIA');
-      addLog('⚠️ Execute o SQL com os INSERTs dos usuários');
-      supabaseReady = false;
-      return false;
+    const error = pfError || uaError;
+    addLog(`❌ Erro: ${error?.message || 'Falha desconhecida'}`);
+    if (error?.code === '42P01' || (error?.message || '').includes('relation')) {
+      addLog('⚠️ Tabelas esperadas não encontradas (profiles/user_accounts). Verifique o schema no projeto atual.');
     }
-
-    addLog(`✅ Supabase OK! ${data.length} profile(s) encontrado(s): ${data[0]?.nome}`);
-    supabaseReady = true;
-    return true;
+    if ((error?.message || '').includes('FetchError') || (error?.message || '').includes('fetch')) {
+      addLog('⚠️ Servidor não acessível. Verifique URL/projeto/rede.');
+    }
+    if ((error?.message || '').includes('JWT') || (error?.message || '').includes('apikey')) {
+      addLog('⚠️ Chave API inválida ou sem permissão.');
+    }
+    supabaseReady = false;
+    return false;
   } catch (e: any) {
     addLog(`❌ Exceção: ${e?.message || String(e)}`);
     supabaseReady = false;
@@ -175,7 +180,12 @@ export async function getAllDenuncias(): Promise<Denuncia[]> {
       .from('denuncias')
       .select('*')
       .order('created_at', { ascending: false });
-    return (data || []).map(mapDenuncia);
+
+    const mapped = (data || []).map(mapDenuncia);
+    if (!mapped.length) return mapped;
+
+    const fotosMap = await getFotosMap(mapped.map(d => d.id));
+    return mapped.map(d => ({ ...d, fotos: fotosMap.get(d.id) || d.fotos || [] }));
   } catch { return []; }
 }
 
@@ -200,17 +210,35 @@ export async function createDenuncia(d: Denuncia): Promise<Denuncia | null> {
     addLog(`📝 Criando denúncia: ${d.protocolo} (email: ${d.auth_email || 'N/A'})`);
     const { data, error } = await supabase!.from('denuncias').insert(insertData).select().single();
     if (error) { addLog(`❌ Erro criar denúncia: ${error.message} | Code: ${error.code}`); return null; }
+
+    if (Array.isArray(d.fotos) && d.fotos.length > 0) {
+      const fotosRows = d.fotos.map((base64, idx) => ({
+        id: `foto-${d.id}-${idx}-${Date.now()}`,
+        denuncia_id: d.id,
+        base64,
+        tipo: 'denuncia',
+      }));
+      const { error: fotosError } = await supabase!.from('fotos').insert(fotosRows);
+      if (fotosError) addLog(`⚠️ Erro ao salvar fotos da denúncia ${d.protocolo}: ${fotosError.message}`);
+    }
+
     addLog(`✅ Denúncia criada no Supabase: ${d.protocolo}`);
-    return data ? mapDenuncia(data) : null;
+    return data ? { ...mapDenuncia(data), fotos: d.fotos || [] } : null;
   } catch (e: any) { addLog(`❌ Exceção criar denúncia: ${e?.message}`); return null; }
 }
 
-export async function updateDenuncia(id: string, updates: Partial<Record<string, any>>): Promise<void> {
-  if (!ok()) return;
+export async function updateDenuncia(id: string, updates: Partial<Record<string, any>>): Promise<boolean> {
+  if (!ok()) return false;
   try {
     const { error } = await supabase!.from('denuncias').update(updates).eq('id', id);
-    if (error) addLog(`❌ Erro update denúncia: ${error.message}`);
-  } catch { /* */ }
+    if (error) {
+      addLog(`❌ Erro update denúncia: ${error.message}`);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ============================================
@@ -362,6 +390,26 @@ export async function createFoto(denunciaId: string, base64: string, tipo: strin
   } catch { /* */ }
 }
 
+async function getFotosMap(denunciaIds: string[]): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  if (!ok() || !denunciaIds.length) return map;
+  try {
+    const { data } = await supabase!
+      .from('fotos')
+      .select('denuncia_id, base64, tipo')
+      .in('denuncia_id', denunciaIds)
+      .eq('tipo', 'denuncia')
+      .order('created_at', { ascending: true });
+
+    (data || []).forEach((row: any) => {
+      const current = map.get(row.denuncia_id) || [];
+      current.push(row.base64);
+      map.set(row.denuncia_id, current);
+    });
+  } catch { /* */ }
+  return map;
+}
+
 // ============================================
 // MENSAGENS
 // ============================================
@@ -483,7 +531,12 @@ export async function deleteUserAccount(email: string): Promise<boolean> {
   }
 }
 
-export async function registerUserAccount(email: string, provider: string = 'email'): Promise<void> {
+export async function registerUserAccount(
+  email: string,
+  provider: string = 'email',
+  password?: string,
+  opts?: { accessType?: 'denunciante' | 'servidor'; serverType?: 'fiscal' | 'gerente' | null }
+): Promise<void> {
   // NÃO depende de ok() — tenta SEMPRE salvar no Supabase diretamente
   if (!supabase || !email || email === 'anonymous') {
     addLog(`⚠️ registerUserAccount: sem supabase ou email inválido (${email})`);
@@ -493,36 +546,51 @@ export async function registerUserAccount(email: string, provider: string = 'ema
     addLog(`📧 Registrando conta no Supabase: ${email}...`);
     
     // Tentar upsert direto
+    const payload: Record<string, any> = {
+      id: `ua-${email.replace(/[^a-z0-9]/gi, '-')}`,
+      email: email.toLowerCase(),
+      provider,
+      ultimo_acesso: new Date().toISOString(),
+      dispositivo: navigator.userAgent.substring(0, 100),
+    };
+    if (provider === 'email' && password) payload.senha = password;
+    if (opts?.accessType) payload.access_type = opts.accessType;
+    if (opts?.serverType !== undefined) payload.server_type = opts.serverType;
+
     const { error } = await supabase
       .from('user_accounts')
-      .upsert({
-        id: `ua-${email.replace(/[^a-z0-9]/gi, '-')}`,
-        email: email.toLowerCase(),
-        provider,
-        ultimo_acesso: new Date().toISOString(),
-        dispositivo: navigator.userAgent.substring(0, 100),
-      }, { onConflict: 'email' });
+      .upsert(payload, { onConflict: 'email' });
 
     if (error) {
       addLog(`⚠️ Upsert falhou: ${error.message}, tentando insert...`);
       // Fallback: tentar insert simples
+      const insertPayload: Record<string, any> = {
+        id: `ua-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        email: email.toLowerCase(),
+        provider,
+        dispositivo: navigator.userAgent.substring(0, 100),
+      };
+      if (provider === 'email' && password) insertPayload.senha = password;
+      if (opts?.accessType) insertPayload.access_type = opts.accessType;
+      if (opts?.serverType !== undefined) insertPayload.server_type = opts.serverType;
+
       const { error: insertError } = await supabase
         .from('user_accounts')
-        .insert({
-          id: `ua-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-          email: email.toLowerCase(),
-          provider,
-          dispositivo: navigator.userAgent.substring(0, 100),
-        });
+        .insert(insertPayload);
       if (insertError) {
         // Pode ser duplicata - tentar update
         if (insertError.message.includes('duplicate') || insertError.code === '23505') {
+          const updatePayload: Record<string, any> = {
+            ultimo_acesso: new Date().toISOString(),
+            dispositivo: navigator.userAgent.substring(0, 100),
+          };
+          if (provider === 'email' && password) updatePayload.senha = password;
+          if (opts?.accessType) updatePayload.access_type = opts.accessType;
+          if (opts?.serverType !== undefined) updatePayload.server_type = opts.serverType;
+
           await supabase
             .from('user_accounts')
-            .update({ 
-              ultimo_acesso: new Date().toISOString(),
-              dispositivo: navigator.userAgent.substring(0, 100),
-            })
+            .update(updatePayload)
             .eq('email', email.toLowerCase());
           addLog(`✅ Conta atualizada: ${email}`);
         } else {
