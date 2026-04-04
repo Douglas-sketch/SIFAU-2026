@@ -16,6 +16,7 @@ const THEME_GRADIENTS: Record<AppTheme, string> = {
   default: 'from-blue-800 via-blue-900 to-slate-900',
   dark: 'from-gray-800 via-gray-900 to-black',
 };
+type AccessType = 'denunciante' | 'servidor';
 
 // ═══════════════════════════════════════════════════════════════
 //  SISTEMA DE CONTAS — Supabase-first
@@ -110,12 +111,14 @@ function clearSession() {
   // DON'T remove ACCOUNTS_DB — keep saved accounts
 }
 
-function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: string) => void; theme: AppTheme }) {
+function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: string, role?: AccessType) => void; theme: AppTheme }) {
+  const supabaseStatus = getSupabaseConfigStatus();
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [, setGoogleLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [accessType, setAccessType] = useState<AccessType>('denunciante');
   const [serverType, setServerType] = useState<'fiscal' | 'gerente'>('fiscal');
@@ -332,17 +335,6 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
             setGoogleLoading(false);
           }
         }
-        if (accessType === 'servidor' && createdMatricula) {
-          setGeneratedMatricula(createdMatricula);
-          setPendingServerAuth({ email: e, role: accessType });
-          setSuccess(`Conta de servidor criada com sucesso!${serverMsg}`);
-          setPassword('');
-          setConfirmPassword('');
-          return;
-        }
-
-        finishAuth(e, 'email', undefined, accessType);
-        return;
       }
       setError('Supabase não configurado para cadastro.');
     } catch (_error) {
@@ -378,21 +370,6 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
       setError(e?.message || 'Erro ao enviar e-mail de recuperação.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleLoadRegisteredAccounts = async () => {
-    setLoadingAccounts(true);
-    try {
-      const rows = await supa.listRegisteredAccounts();
-      setRegisteredAccounts(rows);
-      if (!rows.length) {
-        setError('Nenhuma conta encontrada em user_accounts/app_users neste projeto.');
-      } else {
-        setError('');
-      }
-    } finally {
-      setLoadingAccounts(false);
     }
   };
 
