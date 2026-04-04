@@ -21,7 +21,7 @@ interface AppState {
   notifications: Notification[];
   isOnline: boolean;
   login: (matricula: string, senha: string) => Promise<Profile | null>;
-  registerFiscalAutomatico: (email: string, senha: string, nome?: string, tipo?: 'fiscal' | 'gerente') => Promise<{ matricula: string; profile: Profile } | null>;
+  registerFiscalAutomatico: (email: string, senha: string, nome?: string) => Promise<{ matricula: string; profile: Profile } | null>;
   logout: () => void;
   addDenuncia: (d: Omit<Denuncia, 'id' | 'protocolo' | 'created_at' | 'updated_at'>) => Denuncia;
   updateDenunciaStatus: (id: string, status: DenunciaStatus, extra?: Partial<Denuncia>) => void;
@@ -422,14 +422,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
 
 
-  const registerFiscalAutomatico = useCallback(async (email: string, senha: string, nome?: string, tipo: 'fiscal' | 'gerente' = 'fiscal'): Promise<{ matricula: string; profile: Profile } | null> => {
+  const registerFiscalAutomatico = useCallback(async (email: string, senha: string, nome?: string): Promise<{ matricula: string; profile: Profile } | null> => {
     const cleanEmail = email.trim().toLowerCase();
     const cleanSenha = senha.trim();
-    const baseNome = (nome || cleanEmail.split('@')[0] || (tipo === 'gerente' ? 'Gerente' : 'Fiscal')).trim();
+    const baseNome = (nome || cleanEmail.split('@')[0] || 'Fiscal').trim();
     if (!cleanEmail || !cleanSenha) return null;
 
-    const prefix = tipo === 'gerente' ? 'GER' : 'FSC';
-    const profileId = `${prefix.toLowerCase()}-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+    const profileId = `fsc-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
 
     let existing: Profile | null = null;
     if (isOnline) {
@@ -442,18 +441,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const all = isOnline ? await supa.getAllProfiles() : profiles;
     const source = all.length ? all : profiles;
-    const maxByTipo = source.reduce((acc, p) => {
-      const m = (p.matricula || '').toUpperCase().match(new RegExp(`^${prefix}-(\\d+)$`));
+    const maxFsc = source.reduce((acc, p) => {
+      const m = (p.matricula || '').toUpperCase().match(/^FSC-(\d+)$/);
       if (!m) return acc;
       return Math.max(acc, Number(m[1]));
     }, 0);
 
-    const matricula = existing?.matricula || `${prefix}-${String(maxByTipo + 1).padStart(3, '0')}`;
+    const matricula = existing?.matricula || `FSC-${String(maxFsc + 1).padStart(3, '0')}`;
 
     const profile: Profile = {
       id: profileId,
       nome: baseNome,
-      tipo,
+      tipo: 'fiscal',
       matricula,
       senha: cleanSenha,
       status_online: 'offline',
@@ -473,7 +472,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await supa.registerUserAccount(cleanEmail, 'email');
     }
 
-    addNotification(`${tipo === 'gerente' ? 'Gerente' : 'Fiscal'} criado com matrícula ${matricula}.`, 'success');
+    addNotification(`Fiscal criado com matrícula ${matricula}.`, 'success');
     return { matricula, profile };
   }, [isOnline, profiles, addNotification]);
 
@@ -873,6 +872,63 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       supa.registerUserAccount(clean, 'email');
     }
   }, [isOnline]);
+
+
+
+  const editMinhaDenuncia = useCallback((id: string, updates: { tipo?: Denuncia['tipo']; endereco?: string; descricao?: string; denunciante_nome?: string }) => {
+    const cleanEmail = (authEmail || getAuthEmail() || 'anonymous').toLowerCase();
+    const alvo = denuncias.find(d => d.id === id);
+    if (!alvo) return false;
+    if (cleanEmail === 'anonymous' || (alvo.auth_email && alvo.auth_email.toLowerCase() !== cleanEmail)) return false;
+    if (['aguardando_aprovacao', 'concluida'].includes(alvo.status)) return false;
+
+    const changed: string[] = [];
+    if (updates.tipo && updates.tipo !== alvo.tipo) changed.push(`tipo: "${alvo.tipo}" → "${updates.tipo}"`);
+    if (updates.endereco && updates.endereco.trim() !== alvo.endereco) changed.push('endereço atualizado');
+    if (updates.descricao && updates.descricao.trim() !== alvo.descricao) changed.push('descrição atualizada');
+    if ((updates.denunciante_nome || '') !== (alvo.denunciante_nome || '')) changed.push('nome do denunciante atualizado');
+    if (!changed.length) return false;
+
+    const now = new Date().toISOString();
+    const patch: Partial<Denuncia> = {
+      tipo: updates.tipo || alvo.tipo,
+      endereco: updates.endereco?.trim() || alvo.endereco,
+      descricao: updates.descricao?.trim() || alvo.descricao,
+      denunciante_nome: updates.denunciante_nome?.trim() || alvo.denunciante_nome,
+      updated_at: now,
+    };
+
+    setDenuncias(prev => prev.map(d => d.id === id ? { ...d, ...patch } : d));
+
+    if (isOnline) {
+      const descWithMatricula = alvo.denunciante_matricula
+        ? `[MATRICULA:${alvo.denunciante_matricula}] ${patch.descricao || ''}`.trim()
+        : patch.descricao;
+      supa.updateDenuncia(id, {
+        tipo: patch.tipo,
+        endereco: patch.endereco,
+        descricao: descWithMatricula,
+        denunciante_nome: patch.denunciante_nome,
+        updated_at: now,
+      });
+    }
+
+    const hist: HistoricoAtividade = {
+      id: `hist-${Date.now()}-edit-cid`,
+      fiscal_id: `cid-${cleanEmail}`,
+      denuncia_id: id,
+      tipo_acao: 'Denúncia Editada',
+      pontos: 0,
+      descricao: changed.join('; '),
+      created_at: now,
+    };
+    setHistorico(prev => [hist, ...prev]);
+    if (isOnline) supa.createHistorico(hist);
+
+    addNotification('Denúncia atualizada com sucesso.', 'success');
+    return true;
+  }, [authEmail, denuncias, isOnline, addNotification]);
+
 
 
 
