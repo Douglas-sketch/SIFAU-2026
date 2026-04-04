@@ -154,16 +154,23 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         }
 
         const msg = (authError.message || '').toLowerCase();
+        const localResult = await checkAccount(e, p);
+        if (localResult === 'ok') {
+          finishAuth(e);
+          return;
+        }
         if (msg.includes('invalid login credentials')) {
-          setError('E-mail ou senha incorretos. Verifique seus dados.');
+          setError(localResult === 'wrong_password'
+            ? 'Senha incorreta. Tente novamente.'
+            : 'E-mail ou senha incorretos. Verifique seus dados.');
           return;
         }
         if (msg.includes('email not confirmed')) {
-          setError('Confirme seu e-mail para entrar na conta.');
+          setError('Conta criada, mas o servidor exigiu confirmação de e-mail. Use seu login normalmente no app; se persistir, tente novamente em instantes.');
           return;
         }
 
-        setError('Não foi possível entrar agora. Tente novamente em instantes.');
+        setError('Não foi possível entrar no servidor agora. Verifique internet e tente novamente.');
         return;
       }
 
@@ -219,19 +226,20 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
             setError('Este e-mail já está cadastrado. Faça login.');
             return;
           }
-          setError('Não foi possível criar a conta agora. Tente novamente.');
+          await saveAccount(e, p);
+          setSuccess('Conta criada no app com sucesso! Se o servidor estiver indisponível, a sincronização ocorrerá depois.');
+          finishAuth(e, 'email', undefined, accessType);
           return;
         }
 
         await saveAccount(e, p);
-        if (data?.session) {
-          finishAuth(e);
-        } else {
-          setSuccess('Conta criada com sucesso! Se necessário, confirme seu e-mail para entrar.');
-          setMode('login');
-          setPassword('');
-          setConfirmPassword('');
+        if (!data?.session) {
+          const { error: signInError } = await supabase.auth.signInWithPassword({ email: e, password: p });
+          if (signInError) {
+            console.warn('⚠️ Sign-in imediato após cadastro falhou, seguindo com sessão local:', signInError.message);
+          }
         }
+        finishAuth(e, 'email', undefined, accessType);
         return;
       }
 
