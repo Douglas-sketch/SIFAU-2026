@@ -27,6 +27,7 @@ export interface Denuncia {
   fiscal_id?: string;
   gerente_id?: string;
   denunciante_nome?: string;
+  denunciante_matricula?: string;
   denunciante_anonimo: boolean;
   created_at: string;
   updated_at: string;
