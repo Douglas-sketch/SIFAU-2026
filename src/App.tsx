@@ -146,6 +146,12 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
 
     try {
       if (supabase) {
+        const existsRemote = await supa.userAccountExists(e);
+        if (!existsRemote) {
+          setError('Não encontramos este e-mail no sistema. Revise o endereço; se estiver correto, crie uma conta.');
+          return;
+        }
+
         const { error: authError } = await supabase.auth.signInWithPassword({ email: e, password: p });
         if (!authError) {
           await saveAccount(e, p);
@@ -159,18 +165,20 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           finishAuth(e);
           return;
         }
+        if (msg.includes('email not confirmed')) {
+          // Regra de negócio do app: não bloquear acesso por confirmação de e-mail
+          await saveAccount(e, p);
+          finishAuth(e);
+          return;
+        }
         if (msg.includes('invalid login credentials')) {
           setError(localResult === 'wrong_password'
             ? 'Senha incorreta. Tente novamente.'
             : 'E-mail ou senha incorretos. Verifique seus dados.');
           return;
         }
-        if (msg.includes('email not confirmed')) {
-          setError('Conta criada, mas o servidor exigiu confirmação de e-mail. Use seu login normalmente no app; se persistir, tente novamente em instantes.');
-          return;
-        }
 
-        setError('Não foi possível entrar no servidor agora. Verifique internet e tente novamente.');
+        setError('Não foi possível validar seu login agora. Tente novamente em instantes.');
         return;
       }
 

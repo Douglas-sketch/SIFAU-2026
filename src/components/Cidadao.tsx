@@ -175,6 +175,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   const [transcript, setTranscript] = useState('');
   const [speechSupported, setSpeechSupported] = useState(false);
   const [permissionsRequested, setPermissionsRequested] = useState(false);
+  const [micPermissionGranted, setMicPermissionGranted] = useState<boolean | null>(null);
   const recognitionRef = useRef<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -224,6 +225,25 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   useEffect(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     setSpeechSupported(!!SR);
+  }, []);
+
+  const requestMicrophonePermission = useCallback(async (): Promise<boolean> => {
+    setPermissionsRequested(true);
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setMicPermissionGranted(false);
+        alert('Seu navegador não suporta captura de áudio.');
+        return false;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
+      setMicPermissionGranted(true);
+      return true;
+    } catch {
+      setMicPermissionGranted(false);
+      alert('Permissão de microfone negada. Ative o microfone para usar transcrição por voz.');
+      return false;
+    }
   }, []);
 
   // GPS - Get real location + reverse geocoding for street name
@@ -350,14 +370,9 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
       return;
     }
 
-    try {
-      if (navigator.mediaDevices?.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(track => track.stop());
-      }
-    } catch {
-      alert('Permissão de microfone negada. Ative o microfone para transcrever a descrição.');
-      return;
+    if (micPermissionGranted !== true) {
+      const granted = await requestMicrophonePermission();
+      if (!granted) return;
     }
 
     const recognition = new SR();
@@ -404,7 +419,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
     };
 
     recognition.start();
-  }, [isRecording, requestMicrophonePermission]);
+  }, [isRecording, micPermissionGranted, requestMicrophonePermission]);
 
   useEffect(() => {
     return () => {
@@ -620,8 +635,11 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
                 <div className="mt-2 flex items-center gap-2">
                   <button
                     onClick={requestMicrophonePermission}
+                    disabled={!speechSupported}
                     className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition ${
-                      micPermissionGranted === true
+                      !speechSupported
+                        ? 'bg-gray-100 text-gray-500 border border-gray-200 cursor-not-allowed'
+                        : micPermissionGranted === true
                         ? 'bg-green-50 text-green-700 border border-green-200'
                         : 'bg-white text-blue-700 border border-blue-200 hover:bg-blue-50'
                     }`}
@@ -632,8 +650,11 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 
                   <button
                     onClick={handleRecording}
+                    disabled={!speechSupported || (permissionsRequested && micPermissionGranted === false)}
                     className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition ${
-                      isRecording 
+                      !speechSupported
+                        ? 'bg-gray-100 text-gray-500 border border-gray-200 cursor-not-allowed'
+                        : isRecording 
                         ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-200' 
                         : 'bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100'
                     }`}

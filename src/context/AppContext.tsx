@@ -152,7 +152,7 @@ export const useApp = () => useContext(AppContext);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const initialEmail = 'anonymous';
-  const stored = null;
+  const stored = loadFromStorage(initialEmail);
   const initialProfiles = resetAllStatusesToOffline(ensureAllProfiles(mockProfiles));
   const [profiles, setProfiles] = useState<Profile[]>(initialProfiles);
   const [denuncias, setDenuncias] = useState<Denuncia[]>(stored?.denuncias?.length ? stored.denuncias : mockDenuncias);
