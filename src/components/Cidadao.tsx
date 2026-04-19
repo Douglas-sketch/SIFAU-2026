@@ -176,6 +176,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   const [speechSupported, setSpeechSupported] = useState(false);
   const [isMicPermissionGranted, setIsMicPermissionGranted] = useState<boolean | null>(null);
   const [permissionsRequested, setPermissionsRequested] = useState(false);
+  const [micPermissionGranted, setMicPermissionGranted] = useState<boolean | null>(null);
   const recognitionRef = useRef<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -225,6 +226,25 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   useEffect(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     setSpeechSupported(!!SR);
+  }, []);
+
+  const requestMicrophonePermission = useCallback(async (): Promise<boolean> => {
+    setPermissionsRequested(true);
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setMicPermissionGranted(false);
+        alert('Seu navegador não suporta captura de áudio.');
+        return false;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
+      setMicPermissionGranted(true);
+      return true;
+    } catch {
+      setMicPermissionGranted(false);
+      alert('Permissão de microfone negada. Ative o microfone para usar transcrição por voz.');
+      return false;
+    }
   }, []);
 
   // GPS - Get real location + reverse geocoding for street name
@@ -355,7 +375,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   }, [step, permissionsRequested, requestRequiredPermissions]);
 
   // Speech Recognition - Real voice to text
-  const handleRecording = useCallback(() => {
+  const handleRecording = useCallback(async () => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     
     if (!SR) {
@@ -367,6 +387,11 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
       recognitionRef.current.stop();
       setIsRecording(false);
       return;
+    }
+
+    if (micPermissionGranted !== true) {
+      const granted = await requestMicrophonePermission();
+      if (!granted) return;
     }
 
     const recognition = new SR();
@@ -641,8 +666,11 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 
                   <button
                     onClick={handleRecording}
+                    disabled={!speechSupported || (permissionsRequested && micPermissionGranted === false)}
                     className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition ${
-                      isRecording 
+                      !speechSupported
+                        ? 'bg-gray-100 text-gray-500 border border-gray-200 cursor-not-allowed'
+                        : isRecording 
                         ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-200' 
                         : 'bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100'
                     }`}
@@ -767,11 +795,32 @@ function AcompanharDenuncia({ onBack }: { onBack: () => void }) {
   const [editEndereco, setEditEndereco] = useState('');
   const [editDescricao, setEditDescricao] = useState('');
   const [editNome, setEditNome] = useState('');
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const feedbackTimeoutRef = useRef<number | null>(null);
+
+  const showFeedback = useCallback((type: 'success' | 'error', message: string) => {
+    setFeedback({ type, message });
+    if (feedbackTimeoutRef.current) window.clearTimeout(feedbackTimeoutRef.current);
+    feedbackTimeoutRef.current = window.setTimeout(() => setFeedback(null), 2600);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (feedbackTimeoutRef.current) window.clearTimeout(feedbackTimeoutRef.current);
+    };
+  }, []);
 
   const cleanAuthEmail = (authEmail || '').toLowerCase();
   const minhasDens = denuncias.filter(d => !!cleanAuthEmail && cleanAuthEmail !== 'anonymous' && d.auth_email === cleanAuthEmail);
-  const filtered = minhasDens.filter(d => d.protocolo.includes(busca) || d.endereco.toLowerCase().includes(busca.toLowerCase()));
+  const filtro = busca.toLowerCase().trim();
+  const filtered = minhasDens.filter(
+    (d) =>
+      d.protocolo.toLowerCase().includes(filtro) ||
+      d.endereco.toLowerCase().includes(filtro) ||
+      d.tipo.toLowerCase().includes(filtro)
+  );
   const selected = selectedId ? minhasDens.find(d => d.id === selectedId) || null : null;
+  const selectedStatus = selected ? (statusLabels[selected.status] || statusLabels.pendente) : statusLabels.pendente;
 
   const openDetail = (id: string) => {
     const alvo = minhasDens.find(d => d.id === id);
@@ -791,20 +840,30 @@ function AcompanharDenuncia({ onBack }: { onBack: () => void }) {
 
   const handleSaveEdit = () => {
     if (!selected) return;
+    if (!editEndereco.trim() || !editDescricao.trim()) {
+      showFeedback('error', 'Preencha endereço e descrição antes de salvar.');
+      return;
+    }
     const ok = editMinhaDenuncia(selected.id, {
       tipo: editTipo,
-      endereco: editEndereco,
-      descricao: editDescricao,
+      endereco: editEndereco.trim(),
+      descricao: editDescricao.trim(),
       denunciante_nome: selected.denunciante_anonimo ? undefined : editNome,
     });
-    if (ok) setEditMode(false);
+    if (ok) {
+      setEditMode(false);
+      showFeedback('success', 'Denúncia atualizada com sucesso.');
+      return;
+    }
+    showFeedback('error', 'Não foi possível salvar as alterações.');
   };
 
   const copyProtocol = async (protocolo: string) => {
     try {
       await navigator.clipboard.writeText(`#${protocolo}`);
+      showFeedback('success', `Protocolo #${protocolo} copiado.`);
     } catch {
-      // ignore
+      showFeedback('error', 'Não foi possível copiar o protocolo.');
     }
   };
 
@@ -815,11 +874,13 @@ Status: ${statusLabels[status]?.label || status}`;
     try {
       if (navigator.share) {
         await navigator.share({ title: `Protocolo ${protocolo}`, text });
+        showFeedback('success', 'Resumo compartilhado com sucesso.');
       } else {
         await navigator.clipboard.writeText(text);
+        showFeedback('success', 'Resumo copiado para a área de transferência.');
       }
     } catch {
-      // ignore
+      showFeedback('error', 'Não foi possível compartilhar agora.');
     }
   };
 
@@ -833,6 +894,20 @@ Status: ${statusLabels[status]?.label || status}`;
       </div>
 
       <div className="p-4 md:p-6 max-w-5xl mx-auto">
+        {feedback && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={`mb-4 rounded-xl border px-4 py-3 text-sm md:text-base ${
+              feedback.type === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-red-50 border-red-200 text-red-700'
+            }`}
+          >
+            {feedback.message}
+          </motion.div>
+        )}
+
         {!selected && (
           <>
             <div className="relative mb-4 md:mb-6">
@@ -840,14 +915,20 @@ Status: ${statusLabels[status]?.label || status}`;
               <input
                 value={busca}
                 onChange={e => setBusca(e.target.value)}
-                placeholder="Buscar por protocolo ou endereço..."
+                placeholder="Buscar por protocolo, tipo ou endereço..."
                 className="w-full border rounded-xl pl-10 pr-4 py-3 md:py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 md:text-lg"
               />
             </div>
 
+            {!cleanAuthEmail || cleanAuthEmail === 'anonymous' ? (
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 mb-4 text-sm md:text-base text-blue-900">
+                Faça login com e-mail para acompanhar e editar suas denúncias com histórico completo.
+              </div>
+            ) : null}
+
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
               {filtered.map((d, i) => {
-                const st = statusLabels[d.status];
+                const st = statusLabels[d.status] || statusLabels.pendente;
                 const currentIdx = statusOrder.indexOf(d.status);
                 return (
                   <motion.button
@@ -903,8 +984,8 @@ Status: ${statusLabels[status]?.label || status}`;
                 <p className="text-xs md:text-sm font-mono text-gray-500">#{selected.protocolo}</p>
                 <h3 className="text-lg md:text-2xl font-bold text-gray-800">{selected.tipo}</h3>
               </div>
-              <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusLabels[selected.status].color} flex items-center gap-1`}>
-                {statusLabels[selected.status].icon} {statusLabels[selected.status].label}
+              <span className={`text-xs px-2 py-1 rounded-full font-medium ${selectedStatus.color} flex items-center gap-1`}>
+                {selectedStatus.icon} {selectedStatus.label}
               </span>
             </div>
 
@@ -980,6 +1061,7 @@ Status: ${statusLabels[status]?.label || status}`;
                 <div>
                   <label className="text-sm font-medium text-gray-700 mb-1 block">Descrição</label>
                   <textarea value={editDescricao} onChange={e => setEditDescricao(e.target.value)} rows={4} className="w-full border rounded-xl px-3 py-2" />
+                  <p className="text-xs text-gray-500 mt-1">{editDescricao.trim().length} caracteres</p>
                 </div>
                 {!selected.denunciante_anonimo && (
                   <div>
