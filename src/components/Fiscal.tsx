@@ -29,6 +29,33 @@ const statusLabels: Record<string, string> = {
   devolvida: 'Devolvida p/ Correção',
 };
 
+function daysSince(dateIso: string): number {
+  const created = new Date(dateIso).getTime();
+  const now = Date.now();
+  return Math.max(0, Math.floor((now - created) / (1000 * 60 * 60 * 24)));
+}
+
+function slaRemainingDays(d: Denuncia): number {
+  return Math.max(0, d.sla_dias - daysSince(d.created_at));
+}
+
+function slaProgressPct(d: Denuncia): number {
+  if (!d.sla_dias) return 100;
+  const used = daysSince(d.created_at);
+  return Math.max(0, Math.min(100, ((d.sla_dias - used) / d.sla_dias) * 100));
+}
+
+function distanceKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return 2 * R * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
 function generateReportTemplate(denuncia: Denuncia, fiscalNome: string, fiscalMatricula: string): string {
   const dataAtual = new Date().toLocaleDateString('pt-BR');
   const horaAtual = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -248,6 +275,21 @@ function FiscalDashboard({ denuncias, onSelect }: { denuncias: Denuncia[]; onSel
   const aguardando = minhas.filter(d => d.status === 'aguardando_aprovacao');
   const concluidas = minhas.filter(d => d.status === 'concluida');
   const pontos = getFiscalPontos(currentUser?.id || '');
+  const [gps, setGps] = useState<{ lat: number; lng: number } | null>(null);
+
+  useEffect(() => {
+    navigator.geolocation?.getCurrentPosition(
+      (pos) => setGps({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 5 * 60_000, timeout: 8000 }
+    );
+  }, []);
+
+  const proximaOs = (() => {
+    if (!ativas.length) return null;
+    if (!gps) return ativas[0];
+    return [...ativas].sort((a, b) => distanceKm(gps.lat, gps.lng, a.lat, a.lng) - distanceKm(gps.lat, gps.lng, b.lat, b.lng))[0];
+  })();
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
@@ -296,6 +338,17 @@ function FiscalDashboard({ denuncias, onSelect }: { denuncias: Denuncia[]; onSel
           <h3 className="font-bold text-gray-700 mb-3 flex items-center gap-2 md:text-lg">
             <AlertTriangle size={16} className="text-orange-500" /> Tarefas Ativas
           </h3>
+          {proximaOs && (
+            <div className="mb-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs text-indigo-700 font-semibold">🧭 Próxima OS sugerida</p>
+                <p className="text-sm font-bold text-indigo-900">{proximaOs.tipo} • #{proximaOs.protocolo}</p>
+              </div>
+              <button onClick={() => onSelect(proximaOs)} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold">
+                Abrir
+              </button>
+            </div>
+          )}
           {ativas.length === 0 && (
             <div className="bg-gray-50 rounded-xl p-8 text-center text-gray-400">
               <ClipboardList size={40} className="mx-auto mb-2" />
@@ -317,10 +370,18 @@ function FiscalDashboard({ denuncias, onSelect }: { denuncias: Denuncia[]; onSel
                   <p className="text-sm md:text-base font-semibold text-gray-800">{d.tipo}</p>
                   <p className="text-xs md:text-sm text-gray-500 flex items-center gap-1 truncate"><MapPin size={11} />{d.endereco}</p>
                   <div className="flex items-center gap-2 mt-0.5">
-                    <p className="text-[10px] md:text-xs text-gray-400">SLA: {d.sla_dias} dias • {d.pontos_provisorio} pts previstos</p>
+                    <p className="text-[10px] md:text-xs text-gray-400">
+                      SLA: {slaRemainingDays(d)}d restantes • {d.pontos_provisorio} pts previstos
+                    </p>
                     {d.fotos.length > 0 && (
                       <span className="text-[10px] md:text-xs text-blue-500 flex items-center gap-0.5"><Camera size={9} />{d.fotos.length}</span>
                     )}
+                  </div>
+                  <div className="mt-1 h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full ${slaProgressPct(d) < 25 ? 'bg-red-500' : slaProgressPct(d) < 55 ? 'bg-amber-500' : 'bg-green-500'}`}
+                      style={{ width: `${slaProgressPct(d)}%` }}
+                    />
                   </div>
                 </div>
                 <span className={`text-[10px] md:text-xs px-2 py-1 rounded-full text-white ${statusColors[d.status]}`}>{statusLabels[d.status]}</span>

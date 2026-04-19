@@ -21,97 +21,11 @@ type AccessType = 'denunciante' | 'servidor';
 // ═══════════════════════════════════════════════════════════════
 //  SISTEMA DE CONTAS — Supabase-first
 // ═══════════════════════════════════════════════════════════════
-const ACCOUNTS_DB = 'sifau_accounts_v3';
-const AUTH_SESSION = 'sifau_session_v3';
-const AUTH_EMAIL_KEY = 'sifau_auth_email';
+type AccessType = 'denunciante' | 'servidor';
 
-// Migrar contas da v2 para v3 (para não perder contas já criadas)
-function migrateAccounts() {
-  try {
-    const v2 = localStorage.getItem('sifau_accounts_v2');
-    const v3 = localStorage.getItem(ACCOUNTS_DB);
-    if (v2 && !v3) {
-      localStorage.setItem(ACCOUNTS_DB, v2);
-      console.log('📦 Contas migradas v2→v3');
-    }
-    const s2 = localStorage.getItem('sifau_session_v2');
-    const s3 = localStorage.getItem(AUTH_SESSION);
-    if (s2 && !s3) {
-      localStorage.setItem(AUTH_SESSION, s2);
-      console.log('📦 Sessão migrada v2→v3');
-    }
-  } catch { /* */ }
-}
-migrateAccounts();
+function clearSession() {}
 
-function loadAccounts(): Record<string, { email: string; passwordHash: string; createdAt: string }> {
-  try {
-    return JSON.parse(localStorage.getItem(ACCOUNTS_DB) || '{}');
-  } catch { return {}; }
-}
-
-async function hashPassword(password: string): Promise<string> {
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(password);
-    const digest = await crypto.subtle.digest('SHA-256', data);
-    const bytes = Array.from(new Uint8Array(digest));
-    return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
-  }
-
-  let hash = 5381;
-  for (let i = 0; i < password.length; i += 1) {
-    hash = (hash * 33) ^ password.charCodeAt(i);
-  }
-  return `fallback_${(hash >>> 0).toString(16)}`;
-}
-
-async function saveAccount(email: string, password: string) {
-  const db = loadAccounts();
-  const passwordHash = await hashPassword(password);
-  db[email.toLowerCase().trim()] = { 
-    email: email.toLowerCase().trim(), 
-    passwordHash,
-    createdAt: new Date().toISOString() 
-  };
-  localStorage.setItem(ACCOUNTS_DB, JSON.stringify(db));
-  console.log('💾 Conta salva localmente (hash):', email);
-}
-
-async function checkAccount(email: string, password: string): Promise<'ok' | 'wrong_password' | 'not_found'> {
-  const db = loadAccounts();
-  const key = email.toLowerCase().trim();
-  const acc = db[key] as ({ email: string; passwordHash?: string; password?: string; createdAt: string } | undefined);
-  if (!acc) return 'not_found';
-  const passwordHash = await hashPassword(password);
-  if (acc.passwordHash === passwordHash) return 'ok';
-  if (acc.password === password) {
-    db[key] = { email: key, passwordHash, createdAt: acc.createdAt };
-    localStorage.setItem(ACCOUNTS_DB, JSON.stringify(db));
-    return 'ok';
-  }
-  return 'wrong_password';
-}
-
-function accountExistsLocal(email: string): boolean {
-  const db = loadAccounts();
-  return !!db[email.toLowerCase().trim()];
-}
-
-function getSession(): string | null {
-  try {
-    const s = JSON.parse(localStorage.getItem(AUTH_SESSION) || 'null');
-    return s?.email || null;
-  } catch { return null; }
-}
-
-function clearSession() {
-  localStorage.removeItem(AUTH_SESSION);
-  localStorage.removeItem(AUTH_EMAIL_KEY);
-  // DON'T remove ACCOUNTS_DB — keep saved accounts
-}
-
-function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: string, role?: AccessType) => void; theme: AppTheme }) {
+function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: string, accessType?: AccessType) => void; theme: AppTheme }) {
   const supabaseStatus = getSupabaseConfigStatus();
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [email, setEmail] = useState('');
@@ -146,49 +60,48 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
 
     try {
       if (supabase) {
-        const existsRemote = await supa.userAccountExists(e);
-        if (!existsRemote) {
-          setError('Não encontramos este e-mail no sistema. Revise o endereço; se estiver correto, crie uma conta.');
+        // 1) Login principal via tabela do app (Supabase DB), sem depender de confirmação de e-mail do Auth
+        const legacyStatus = await supa.checkUserAccountCredentials(e, p);
+        if (legacyStatus === 'ok') {
+          const roleInfo = await supa.getAccountAccessByEmail(e);
+          finishAuth(e, 'email', undefined, roleInfo.accessType);
+          await supa.registerUserAccount(e, 'email', undefined, {
+            accessType: roleInfo.accessType,
+            serverType: roleInfo.serverType,
+          });
           return;
         }
 
+        // 2) Compatibilidade: contas que existem apenas no Supabase Auth
         const { error: authError } = await supabase.auth.signInWithPassword({ email: e, password: p });
         if (!authError) {
-          await saveAccount(e, p);
-          finishAuth(e);
+          const roleInfo = await supa.getAccountAccessByEmail(e);
+          finishAuth(e, 'email', undefined, roleInfo.accessType);
+          await supa.registerUserAccount(e, 'email', undefined, {
+            accessType: roleInfo.accessType,
+            serverType: roleInfo.serverType,
+          });
           return;
         }
 
         const msg = (authError.message || '').toLowerCase();
-        const localResult = await checkAccount(e, p);
-        if (localResult === 'ok') {
-          finishAuth(e);
+        if (msg.includes('invalid login credentials')) {
+          setError(
+            legacyStatus === 'wrong_password'
+              ? 'Senha incorreta. Verifique e tente novamente.'
+              : 'Conta não encontrada no Auth. Se sua conta é antiga, confirme variáveis do Supabase e tabela user_accounts.'
+          );
           return;
         }
         if (msg.includes('email not confirmed')) {
-          // Regra de negócio do app: não bloquear acesso por confirmação de e-mail
-          await saveAccount(e, p);
-          finishAuth(e);
-          return;
-        }
-        if (msg.includes('invalid login credentials')) {
-          setError(localResult === 'wrong_password'
-            ? 'Senha incorreta. Tente novamente.'
-            : 'E-mail ou senha incorretos. Verifique seus dados.');
+          setError('Conta encontrada, mas o Supabase Auth está exigindo confirmação. Para este app, entre com a senha cadastrada em user_accounts.');
           return;
         }
 
         setError('Não foi possível validar seu login agora. Tente novamente em instantes.');
         return;
       }
-
-      const result = await checkAccount(e, p);
-      if (result === 'ok') {
-        finishAuth(e);
-        return;
-      }
-
-      setError(result === 'wrong_password' ? 'Senha incorreta. Tente novamente.' : 'Conta não encontrada neste dispositivo. Conecte à internet para validar sua conta.');
+      setError('Supabase não configurado para autenticação.');
     } catch {
       setError('Erro ao conectar. Tente novamente.');
     } finally {
@@ -221,136 +134,32 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           setError('Este e-mail já está cadastrado. Faça login.');
           return;
         }
-
-        const { data, error: signUpError } = await supabase.auth.signUp({
-          email: e,
-          password: p,
-          options: { data: { app: 'sifau' } },
+        
+        // Cadastro direto no banco do app (user_accounts/app_users), sem exigir confirmação do Auth
+        await supa.registerUserAccount(e, 'email', p, {
+          accessType,
+          serverType: accessType === 'servidor' ? serverType : null,
         });
-
-        if (signUpError) {
-          const msg = (signUpError.message || '').toLowerCase();
-          if (msg.includes('already registered') || msg.includes('already exists')) {
-            setError('Este e-mail já está cadastrado. Faça login.');
-            return;
+        let serverMsg = '';
+        let createdMatricula: string | null = null;
+        if (accessType === 'servidor') {
+          const created = await supa.ensureServerAccessByEmail(e, p, serverType);
+          if (created?.matricula) {
+            createdMatricula = created.matricula;
+            serverMsg = ` Matrícula única gerada: ${created.matricula}.`;
           }
-          await saveAccount(e, p);
-          setSuccess('Conta criada no app com sucesso! Se o servidor estiver indisponível, a sincronização ocorrerá depois.');
-          finishAuth(e, 'email', undefined, accessType);
+        }
+        if (accessType === 'servidor' && createdMatricula) {
+          setGeneratedMatricula(createdMatricula);
+          setPendingServerAuth({ email: e, role: accessType });
+          setSuccess(`Conta de servidor criada com sucesso!${serverMsg}`);
+          setPassword('');
+          setConfirmPassword('');
           return;
         }
 
-        await saveAccount(e, p);
-        if (!data?.session) {
-          const { error: signInError } = await supabase.auth.signInWithPassword({ email: e, password: p });
-          if (signInError) {
-            console.warn('⚠️ Sign-in imediato após cadastro falhou, seguindo com sessão local:', signInError.message);
-          }
-        }
         finishAuth(e, 'email', undefined, accessType);
         return;
-      }
-
-      if (accountExistsLocal(e)) {
-        setError('Este e-mail já está cadastrado neste dispositivo. Faça login.');
-        return;
-      }
-      await saveAccount(e, p);
-      finishAuth(e);
-    } catch {
-      setError('Erro ao criar conta. Tente novamente.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    setError('');
-    setGoogleLoading(true);
-    try {
-      if (supabase) {
-        // Detect if running inside Capacitor (Android app)
-        const isCapacitor = !!(window as any).Capacitor;
-        
-        if (isCapacitor) {
-          // ANDROID APP: Open in-app browser, then capture redirect
-          const redirectUrl = 'com.sifau.app://auth/callback';
-          
-          const { data, error: authError } = await supabase.auth.signInWithOAuth({
-            provider: 'google',
-            options: {
-              redirectTo: redirectUrl,
-              skipBrowserRedirect: true, // Don't auto-redirect, we handle it
-            },
-          });
-          
-          if (authError) {
-            setError('Erro ao conectar com Google: ' + authError.message);
-            setGoogleLoading(false);
-            return;
-          }
-          
-          if (data?.url) {
-            // Open OAuth inside the app (do not leave the app)
-            try {
-              const { Browser } = await import('@capacitor/browser');
-              const { App: CapApp } = await import('@capacitor/app');
-
-              let browserFinishedListener: { remove: () => void } | null = null;
-              const appUrlListener = await CapApp.addListener('appUrlOpen', async (event: { url: string }) => {
-                const url = new URL(event.url);
-                const params = new URLSearchParams(url.hash.substring(1)); // After #
-                const accessToken = params.get('access_token');
-                const refreshToken = params.get('refresh_token');
-
-                if (accessToken && refreshToken) {
-                  const { data: sessionData } = await supabase!.auth.setSession({
-                    access_token: accessToken,
-                    refresh_token: refreshToken,
-                  });
-
-                  if (sessionData?.user?.email) {
-                    finishAuth(sessionData.user.email, 'google');
-                  }
-                }
-
-                await Browser.close();
-                appUrlListener.remove();
-                browserFinishedListener?.remove();
-                setGoogleLoading(false);
-              });
-
-              browserFinishedListener = await Browser.addListener('browserFinished', () => {
-                appUrlListener.remove();
-                browserFinishedListener?.remove();
-                setGoogleLoading(false);
-              });
-
-              await Browser.open({ url: data.url, windowName: '_self' });
-            } catch {
-              setError('Não foi possível abrir o login do Google dentro do app.');
-              setGoogleLoading(false);
-            }
-          } else {
-            setError('Não foi possível obter URL de login do Google.');
-            setGoogleLoading(false);
-          }
-        } else {
-          // WEB BROWSER: Normal redirect flow
-          const redirectUrl = window.location.origin + window.location.pathname;
-          
-          const { error: authError } = await supabase.auth.signInWithOAuth({
-            provider: 'google',
-            options: {
-              redirectTo: redirectUrl,
-            },
-          });
-          
-          if (authError) {
-            setError('Erro ao conectar com Google: ' + authError.message);
-            setGoogleLoading(false);
-          }
-        }
       }
       setError('Supabase não configurado para cadastro.');
     } catch (_error) {
@@ -774,6 +583,7 @@ function LoginScreen({ onBack, onSuccess, theme }: { onBack: () => void; onSucce
   const [matricula, setMatricula] = useState('');
   const [emailFiscal, setEmailFiscal] = useState('');
   const [nomeFiscal, setNomeFiscal] = useState('');
+  const [tipoServidor, setTipoServidor] = useState<'fiscal' | 'gerente'>('fiscal');
   const [senha, setSenha] = useState('');
   const [confirmSenha, setConfirmSenha] = useState('');
   const [showSenha, setShowSenha] = useState(false);
@@ -818,14 +628,14 @@ function LoginScreen({ onBack, onSuccess, theme }: { onBack: () => void; onSucce
     setSuccess('');
     setLoading(true);
     try {
-      const created = await registerFiscalAutomatico(emailFiscal, senha, nomeFiscal);
+      const created = await registerFiscalAutomatico(emailFiscal, senha, nomeFiscal, tipoServidor);
       if (!created) {
         setError('Não foi possível criar o acesso agora.');
         return;
       }
 
       setMatricula(created.matricula);
-      setSuccess(`Acesso criado com sucesso! Matrícula gerada: ${created.matricula}`);
+      setSuccess(`Acesso ${tipoServidor} criado com sucesso! Matrícula gerada: ${created.matricula}`);
       setMode('login');
       setConfirmSenha('');
     } catch {
@@ -873,7 +683,7 @@ function LoginScreen({ onBack, onSuccess, theme }: { onBack: () => void; onSucce
               onClick={() => { setMode('register'); setError(''); setSuccess(''); }}
               className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'register' ? 'bg-blue-600 text-white' : 'text-white/70'}`}
             >
-              Novo Fiscal
+              Novo Servidor
             </button>
           </div>
 
@@ -918,6 +728,17 @@ function LoginScreen({ onBack, onSuccess, theme }: { onBack: () => void; onSucce
                     placeholder="fiscal@prefeitura.gov.br"
                     className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 md:py-4 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-400 md:text-lg"
                   />
+                </div>
+                <div>
+                  <label className="text-sm md:text-base text-blue-200 mb-1 block">Tipo de servidor</label>
+                  <select
+                    value={tipoServidor}
+                    onChange={e => setTipoServidor(e.target.value as 'fiscal' | 'gerente')}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 md:py-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400 md:text-lg"
+                  >
+                    <option value="fiscal" className="text-black">Fiscal</option>
+                    <option value="gerente" className="text-black">Gerente</option>
+                  </select>
                 </div>
                 <div>
                   <label className="text-sm md:text-base text-blue-200 mb-1 block">Nome (opcional)</label>
@@ -1302,6 +1123,8 @@ function AppContent() {
     sessionStorage.removeItem('sifau_screen');
     setIsAuthenticated(false);
     setAuthEmail('anonymous');
+    setAccessType('denunciante');
+    setHomeError('');
     setScreen('home');
     logout();
   };
