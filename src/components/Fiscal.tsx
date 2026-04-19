@@ -9,6 +9,7 @@ import { useApp } from '../context/AppContext';
 import { Denuncia, TIPO_MULTA_VALORES } from '../types';
 import Mensagens from './Mensagens';
 import { PhotoGallery } from './PhotoViewer';
+import { notifyNewTaskWithAlert, requestNotificationPermission } from '../lib/notifications';
 
 const statusColors: Record<string, string> = {
   designada: 'bg-blue-500',
@@ -27,6 +28,33 @@ const statusLabels: Record<string, string> = {
   pendente: 'Pendente',
   devolvida: 'Devolvida p/ Correção',
 };
+
+function daysSince(dateIso: string): number {
+  const created = new Date(dateIso).getTime();
+  const now = Date.now();
+  return Math.max(0, Math.floor((now - created) / (1000 * 60 * 60 * 24)));
+}
+
+function slaRemainingDays(d: Denuncia): number {
+  return Math.max(0, d.sla_dias - daysSince(d.created_at));
+}
+
+function slaProgressPct(d: Denuncia): number {
+  if (!d.sla_dias) return 100;
+  const used = daysSince(d.created_at);
+  return Math.max(0, Math.min(100, ((d.sla_dias - used) / d.sla_dias) * 100));
+}
+
+function distanceKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return 2 * R * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
 
 function generateReportTemplate(denuncia: Denuncia, fiscalNome: string, fiscalMatricula: string): string {
   const dataAtual = new Date().toLocaleDateString('pt-BR');
@@ -247,6 +275,21 @@ function FiscalDashboard({ denuncias, onSelect }: { denuncias: Denuncia[]; onSel
   const aguardando = minhas.filter(d => d.status === 'aguardando_aprovacao');
   const concluidas = minhas.filter(d => d.status === 'concluida');
   const pontos = getFiscalPontos(currentUser?.id || '');
+  const [gps, setGps] = useState<{ lat: number; lng: number } | null>(null);
+
+  useEffect(() => {
+    navigator.geolocation?.getCurrentPosition(
+      (pos) => setGps({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 5 * 60_000, timeout: 8000 }
+    );
+  }, []);
+
+  const proximaOs = (() => {
+    if (!ativas.length) return null;
+    if (!gps) return ativas[0];
+    return [...ativas].sort((a, b) => distanceKm(gps.lat, gps.lng, a.lat, a.lng) - distanceKm(gps.lat, gps.lng, b.lat, b.lng))[0];
+  })();
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
@@ -295,6 +338,17 @@ function FiscalDashboard({ denuncias, onSelect }: { denuncias: Denuncia[]; onSel
           <h3 className="font-bold text-gray-700 mb-3 flex items-center gap-2 md:text-lg">
             <AlertTriangle size={16} className="text-orange-500" /> Tarefas Ativas
           </h3>
+          {proximaOs && (
+            <div className="mb-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs text-indigo-700 font-semibold">🧭 Próxima OS sugerida</p>
+                <p className="text-sm font-bold text-indigo-900">{proximaOs.tipo} • #{proximaOs.protocolo}</p>
+              </div>
+              <button onClick={() => onSelect(proximaOs)} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold">
+                Abrir
+              </button>
+            </div>
+          )}
           {ativas.length === 0 && (
             <div className="bg-gray-50 rounded-xl p-8 text-center text-gray-400">
               <ClipboardList size={40} className="mx-auto mb-2" />
@@ -316,10 +370,18 @@ function FiscalDashboard({ denuncias, onSelect }: { denuncias: Denuncia[]; onSel
                   <p className="text-sm md:text-base font-semibold text-gray-800">{d.tipo}</p>
                   <p className="text-xs md:text-sm text-gray-500 flex items-center gap-1 truncate"><MapPin size={11} />{d.endereco}</p>
                   <div className="flex items-center gap-2 mt-0.5">
-                    <p className="text-[10px] md:text-xs text-gray-400">SLA: {d.sla_dias} dias • {d.pontos_provisorio} pts previstos</p>
+                    <p className="text-[10px] md:text-xs text-gray-400">
+                      SLA: {slaRemainingDays(d)}d restantes • {d.pontos_provisorio} pts previstos
+                    </p>
                     {d.fotos.length > 0 && (
                       <span className="text-[10px] md:text-xs text-blue-500 flex items-center gap-0.5"><Camera size={9} />{d.fotos.length}</span>
                     )}
+                  </div>
+                  <div className="mt-1 h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full ${slaProgressPct(d) < 25 ? 'bg-red-500' : slaProgressPct(d) < 55 ? 'bg-amber-500' : 'bg-green-500'}`}
+                      style={{ width: `${slaProgressPct(d)}%` }}
+                    />
                   </div>
                 </div>
                 <span className={`text-[10px] md:text-xs px-2 py-1 rounded-full text-white ${statusColors[d.status]}`}>{statusLabels[d.status]}</span>
@@ -1327,14 +1389,28 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
             </button>
             <button
               onClick={() => {
-                const printWindow = window.open('', '_blank');
-                if (!printWindow) return;
                 const fotosHtml = fotosRel.map(f => `<img src="${f}" style="width:200px;height:150px;object-fit:cover;border-radius:8px;border:1px solid #ddd;" />`).join('');
                 const assHtml = assinatura ? `<div style="margin-top:16px;"><p style="font-weight:bold;color:#555;font-size:12px;">ASSINATURA DIGITAL</p><img src="${assinatura}" style="height:60px;border:1px solid #ddd;border-radius:4px;padding:4px;background:#f9fafb;" /></div>` : '';
                 const osHtml = `${os20 ? '<span style="background:#dcfce7;color:#166534;padding:4px 10px;border-radius:12px;font-size:12px;font-weight:bold;">✅ O.S. 2.0 — Cumprida (+50 pts)</span>' : ''}${os40 ? '<span style="background:#dcfce7;color:#166534;padding:4px 10px;border-radius:12px;font-size:12px;font-weight:bold;margin-left:8px;">✅ O.S. 4.0 — Notificação (+50 pts)</span>' : ''}`;
-                printWindow.document.write(`<!DOCTYPE html><html><head><title>Relatório - ${denuncia.protocolo}</title><style>body{font-family:Arial,sans-serif;margin:40px;color:#333;line-height:1.6;}h1{color:#1e3a8a;border-bottom:3px solid #1e3a8a;padding-bottom:8px;}h2{color:#1e40af;margin-top:24px;}.info{background:#f0f4ff;padding:16px;border-radius:8px;margin:16px 0;}.photos{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}pre{white-space:pre-wrap;word-wrap:break-word;font-size:13px;background:#f9fafb;padding:16px;border:1px solid #e5e7eb;border-radius:8px;}.footer{margin-top:40px;padding-top:16px;border-top:2px solid #e5e7eb;text-align:center;font-size:11px;color:#999;}@media print{body{margin:20px;}}</style></head><body><h1>🛡️ SIFAU — Relatório de Fiscalização</h1><div class="info"><p><strong>Protocolo:</strong> #${denuncia.protocolo}</p><p><strong>Tipo:</strong> ${denuncia.tipo}</p><p><strong>Endereço:</strong> ${denuncia.endereco}</p><p><strong>Data:</strong> ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'})}</p><p><strong>Fiscal:</strong> ${currentUser?.nome} (${currentUser?.matricula})</p><p><strong>Status:</strong> ${statusLabels[denuncia.status]}</p></div>${osHtml ? `<div style="margin:12px 0;">${osHtml}</div>` : ''}<h2>📋 Relatório Técnico</h2><pre>${textoRelatorio}</pre>${fotosRel.length > 0 ? `<h2>📷 Fotos do Fiscal (${fotosRel.length})</h2><div class="photos">${fotosHtml}</div>` : ''}${assHtml}<div class="footer"><p>Documento gerado pelo SIFAU — Sistema Inteligente de Fiscalização e Atividades Urbanas</p><p>${new Date().toLocaleString('pt-BR')}</p></div></body></html>`);
-                printWindow.document.close();
-                setTimeout(() => printWindow.print(), 500);
+                const html = `<!DOCTYPE html><html><head><title>Relatório - ${denuncia.protocolo}</title><style>body{font-family:Arial,sans-serif;margin:40px;color:#333;line-height:1.6;}h1{color:#1e3a8a;border-bottom:3px solid #1e3a8a;padding-bottom:8px;}h2{color:#1e40af;margin-top:24px;}.info{background:#f0f4ff;padding:16px;border-radius:8px;margin:16px 0;}.photos{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}pre{white-space:pre-wrap;word-wrap:break-word;font-size:13px;background:#f9fafb;padding:16px;border:1px solid #e5e7eb;border-radius:8px;}.footer{margin-top:40px;padding-top:16px;border-top:2px solid #e5e7eb;text-align:center;font-size:11px;color:#999;}@media print{body{margin:20px;}}</style></head><body><h1>🛡️ SIFAU — Relatório de Fiscalização</h1><div class="info"><p><strong>Protocolo:</strong> #${denuncia.protocolo}</p><p><strong>Tipo:</strong> ${denuncia.tipo}</p><p><strong>Endereço:</strong> ${denuncia.endereco}</p><p><strong>Data:</strong> ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'})}</p><p><strong>Fiscal:</strong> ${currentUser?.nome} (${currentUser?.matricula})</p><p><strong>Status:</strong> ${statusLabels[denuncia.status]}</p></div>${osHtml ? `<div style="margin:12px 0;">${osHtml}</div>` : ''}<h2>📋 Relatório Técnico</h2><pre>${textoRelatorio}</pre>${fotosRel.length > 0 ? `<h2>📷 Fotos do Fiscal (${fotosRel.length})</h2><div class="photos">${fotosHtml}</div>` : ''}${assHtml}<div class="footer"><p>Documento gerado pelo SIFAU — Sistema Inteligente de Fiscalização e Atividades Urbanas</p><p>${new Date().toLocaleString('pt-BR')}</p></div></body></html>`;
+                const iframe = document.createElement('iframe');
+                iframe.style.position = 'fixed';
+                iframe.style.right = '0';
+                iframe.style.bottom = '0';
+                iframe.style.width = '0';
+                iframe.style.height = '0';
+                iframe.style.border = '0';
+                document.body.appendChild(iframe);
+                const doc = iframe.contentWindow?.document;
+                if (!doc) return;
+                doc.open();
+                doc.write(html);
+                doc.close();
+                setTimeout(() => {
+                  iframe.contentWindow?.focus();
+                  iframe.contentWindow?.print();
+                  setTimeout(() => document.body.removeChild(iframe), 1000);
+                }, 500);
               }}
               className="w-full bg-slate-700 text-white rounded-xl py-3 md:py-4 font-semibold flex items-center justify-center gap-2 md:text-lg"
             >
@@ -1632,12 +1708,17 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
 }
 
 export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }: { onLogout: () => void; onOpenSettings: () => void; theme: string; profilePhoto?: string }) {
-  const { denuncias, notifications, dismissNotification } = useApp();
+  const { denuncias, notifications, dismissNotification, addNotification } = useApp();
   const [tab, setTab] = useState<'home' | 'processos' | 'pontos' | 'mensagens'>('home');
   const [selectedTask, setSelectedTask] = useState<Denuncia | null>(null);
   const [viewingReport, setViewingReport] = useState<Denuncia | null>(null);
   const { getConversas, currentUser } = useApp();
   const totalUnread = currentUser ? getConversas(currentUser.id).reduce((s, c) => s + c.unread, 0) : 0;
+  const knownTaskIdsRef = useRef<Set<string>>(new Set());
+  const taskWatchBootstrappedRef = useRef(false);
+  const [notificationPermission, setNotificationPermission] = useState<'granted' | 'denied' | 'default' | 'unsupported'>(
+    typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
+  );
 
   // Handle device back button
   useEffect(() => {
@@ -1676,6 +1757,53 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
     setTab(newTab);
   };
 
+  // Notificação sonora + browser para nova tarefa designada
+  useEffect(() => {
+    if (!currentUser) return;
+    const minhasDesignadas = denuncias.filter(d => d.fiscal_id === currentUser.id && d.status === 'designada');
+    const nextIds = new Set(minhasDesignadas.map(d => d.id));
+
+    // Primeira carga: só registra o estado atual para evitar alertas de tarefas antigas
+    if (!taskWatchBootstrappedRef.current) {
+      knownTaskIdsRef.current = nextIds;
+      taskWatchBootstrappedRef.current = true;
+      return;
+    }
+
+    minhasDesignadas.forEach(d => {
+      if (!knownTaskIdsRef.current.has(d.id)) {
+        notifyNewTaskWithAlert(currentUser.nome || 'Fiscal', d.protocolo, d.tipo).catch(() => {});
+      }
+    });
+
+    knownTaskIdsRef.current = nextIds;
+  }, [denuncias, currentUser]);
+
+  const handleEnableNotifications = async () => {
+    const granted = await requestNotificationPermission();
+    if (typeof Notification !== 'undefined') {
+      setNotificationPermission(Notification.permission);
+    } else {
+      setNotificationPermission('unsupported');
+    }
+    if (granted) {
+      addNotification('✅ Notificações ativadas com sucesso.', 'success');
+    } else {
+      addNotification('⚠️ Permissão negada. Ative notificações nas configurações do dispositivo/navegador.', 'warning');
+    }
+  };
+
+  // Fallback interno quando o dispositivo não suporta Notification API
+  useEffect(() => {
+    const handler = (evt: Event) => {
+      const custom = evt as CustomEvent<{ title?: string; body?: string }>;
+      const text = custom.detail?.body || custom.detail?.title || 'Nova atualização do sistema.';
+      addNotification(text, 'info');
+    };
+    window.addEventListener('sifau-inapp-notification', handler as EventListener);
+    return () => window.removeEventListener('sifau-inapp-notification', handler as EventListener);
+  }, [addNotification]);
+
   if (viewingReport) {
     const fresh = denuncias.find(d => d.id === viewingReport.id);
     if (fresh) {
@@ -1699,6 +1827,27 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
 
   return (
     <div className="min-h-screen bg-gray-50 lg:flex">
+      {notificationPermission !== 'granted' && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[120] w-[92%] max-w-xl rounded-xl border border-amber-300 bg-amber-50 shadow-lg p-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-amber-800">Ative notificações do fiscal</p>
+            <p className="text-xs text-amber-700">
+              {notificationPermission === 'unsupported'
+                ? 'Seu dispositivo não expõe Notification API. O app usará alertas internos com som e vibração.'
+                : 'Para receber alerta no celular quando houver nova tarefa designada.'}
+            </p>
+          </div>
+          {notificationPermission !== 'unsupported' && (
+            <button
+              onClick={handleEnableNotifications}
+              className="shrink-0 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-amber-950 text-xs font-semibold"
+            >
+              Ativar
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Notifications */}
       <AnimatePresence>
         {notifications.map(n => (
