@@ -174,7 +174,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   const [gpsCoords, setGpsCoords] = useState<{lat: number; lng: number} | null>(null);
   const [transcript, setTranscript] = useState('');
   const [speechSupported, setSpeechSupported] = useState(false);
-  const [micPermissionGranted, setMicPermissionGranted] = useState<boolean | null>(null);
+  const [isMicPermissionGranted, setIsMicPermissionGranted] = useState<boolean | null>(null);
   const [permissionsRequested, setPermissionsRequested] = useState(false);
   const [micPermissionGranted, setMicPermissionGranted] = useState<boolean | null>(null);
   const recognitionRef = useRef<any>(null);
@@ -351,18 +351,18 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 
   }, []);
 
-  const requestMicrophonePermission = useCallback(async () => {
+  const ensureMicrophonePermission = useCallback(async () => {
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
-        setMicPermissionGranted(false);
+        setIsMicPermissionGranted(false);
         return false;
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach(track => track.stop());
-      setMicPermissionGranted(true);
+      setIsMicPermissionGranted(true);
       return true;
     } catch {
-      setMicPermissionGranted(false);
+      setIsMicPermissionGranted(false);
       alert('Permissão de microfone negada. Ative o microfone para transcrever a descrição.');
       return false;
     }
@@ -422,7 +422,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 
     recognition.onerror = (event: any) => {
       console.error('Speech error:', event.error);
-      if (event.error === 'not-allowed') requestMicrophonePermission();
+      if (event.error === 'not-allowed') ensureMicrophonePermission();
       setIsRecording(false);
     };
 
@@ -438,7 +438,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
     };
 
     recognition.start();
-  }, [isRecording, requestMicrophonePermission]);
+  }, [isRecording, ensureMicrophonePermission]);
 
   useEffect(() => {
     return () => {
@@ -653,15 +653,15 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 
                 <div className="mt-2 flex items-center gap-2">
                   <button
-                    onClick={requestMicrophonePermission}
+                    onClick={ensureMicrophonePermission}
                     className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition ${
-                      micPermissionGranted === true
+                      isMicPermissionGranted === true
                         ? 'bg-green-50 text-green-700 border border-green-200'
                         : 'bg-white text-blue-700 border border-blue-200 hover:bg-blue-50'
                     }`}
                   >
                     <Mic size={16} />
-                    {micPermissionGranted === true ? '✅ Microfone ativo' : 'Ativar microfone'}
+                    {isMicPermissionGranted === true ? '✅ Microfone ativo' : 'Ativar microfone'}
                   </button>
 
                   <button
