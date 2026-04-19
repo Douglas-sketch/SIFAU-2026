@@ -624,6 +624,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ? { ...d, fiscal_id: fiscalId, gerente_id: currentUser?.id, status: 'designada' as DenunciaStatus, pontos_provisorio: pontosProvisorio, updated_at: new Date().toISOString() }
         : d
     ));
+    let synced = true;
     if (isOnline) {
       const synced = await supa.updateDenuncia(denunciaId, {
         fiscal_id: fiscalId, gerente_id: currentUser?.id,
@@ -925,7 +926,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addNotification('Denúncia atualizada com sucesso.', 'success');
     return true;
   }, [authEmail, denuncias, isOnline, addNotification]);
-
 
   return (
     <AppContext.Provider value={{
