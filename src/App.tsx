@@ -16,6 +16,7 @@ const THEME_GRADIENTS: Record<AppTheme, string> = {
   default: 'from-blue-800 via-blue-900 to-slate-900',
   dark: 'from-gray-800 via-gray-900 to-black',
 };
+type AccessType = 'denunciante' | 'servidor';
 
 // ═══════════════════════════════════════════════════════════════
 //  SISTEMA DE CONTAS — Supabase-first
@@ -31,6 +32,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [, setGoogleLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [accessType, setAccessType] = useState<AccessType>('denunciante');
   const [serverType, setServerType] = useState<'fiscal' | 'gerente'>('fiscal');
@@ -96,7 +98,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           return;
         }
 
-        setError('Não foi possível entrar agora. Tente novamente em instantes.');
+        setError('Não foi possível validar seu login agora. Tente novamente em instantes.');
         return;
       }
       setError('Supabase não configurado para autenticação.');
