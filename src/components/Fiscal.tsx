@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Home, ClipboardList, Trophy, LogOut, MapPin, Clock, CheckCircle, AlertTriangle,
   FileText, DollarSign, Send, ArrowLeft, Eye, ChevronRight, Star, Pen, Plus, Camera, ImageIcon,
-  FolderOpen, ChevronDown, Calendar, TrendingUp, Settings, Search, X, Printer
+  FolderOpen, ChevronDown, Calendar, TrendingUp, Settings, Search, X, Printer, User
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Denuncia, TIPO_MULTA_VALORES } from '../types';
@@ -276,6 +276,7 @@ function FiscalDashboard({ denuncias, onSelect }: { denuncias: Denuncia[]; onSel
   const concluidas = minhas.filter(d => d.status === 'concluida');
   const pontos = getFiscalPontos(currentUser?.id || '');
   const [gps, setGps] = useState<{ lat: number; lng: number } | null>(null);
+  const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
 
   useEffect(() => {
     navigator.geolocation?.getCurrentPosition(
@@ -290,6 +291,10 @@ function FiscalDashboard({ denuncias, onSelect }: { denuncias: Denuncia[]; onSel
     if (!gps) return ativas[0];
     return [...ativas].sort((a, b) => distanceKm(gps.lat, gps.lng, a.lat, a.lng) - distanceKm(gps.lat, gps.lng, b.lat, b.lng))[0];
   })();
+  const rotaDoDia = gps
+    ? [...ativas].sort((a, b) => distanceKm(gps.lat, gps.lng, a.lat, a.lng) - distanceKm(gps.lat, gps.lng, b.lat, b.lng))
+    : ativas;
+  const selectedPin = ativas.find(d => d.id === selectedPinId) || null;
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
@@ -335,6 +340,82 @@ function FiscalDashboard({ denuncias, onSelect }: { denuncias: Denuncia[]; onSel
 
       <div className="px-4 md:px-6 lg:px-8 pt-4 pb-24 lg:pb-8">
         <div className="max-w-5xl mx-auto">
+          <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2 md:text-lg">
+            <MapPin size={16} className="text-blue-600" /> Mapa de Operação (Minhas OS)
+          </h3>
+          <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="relative h-56 md:h-64 rounded-xl bg-gradient-to-br from-sky-50 via-indigo-50 to-white border overflow-hidden">
+              <div className="absolute inset-0 opacity-40 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #94a3b8 1px, transparent 0)', backgroundSize: '18px 18px' }} />
+              {ativas.length === 0 ? (
+                <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-500">
+                  Sem OS ativas para exibir no mapa
+                </div>
+              ) : (
+                ativas.map((d, idx) => {
+                  const left = 10 + ((d.lng + 180) / 360) * 80;
+                  const top = 12 + ((90 - (d.lat + 90)) / 180) * 70;
+                  const isCritical = slaRemainingDays(d) <= 1;
+                  const isSelected = selectedPinId === d.id;
+                  return (
+                    <button
+                      key={d.id}
+                      onClick={() => setSelectedPinId(d.id)}
+                      title={`${d.protocolo} • ${d.tipo}`}
+                      className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 text-white text-[10px] px-2 py-1 font-bold shadow ${
+                        isSelected ? 'bg-blue-700 border-blue-200 scale-110' : isCritical ? 'bg-red-600 border-red-200' : 'bg-amber-500 border-amber-100'
+                      }`}
+                      style={{ left: `${left}%`, top: `${top}%` }}
+                    >
+                      #{idx + 1}
+                    </button>
+                  );
+                })
+              )}
+              {selectedPin && (
+                <div className="absolute left-3 right-3 bottom-3 rounded-xl border border-blue-200 bg-white/95 backdrop-blur p-3 shadow-lg">
+                  <p className="text-xs text-blue-700 font-semibold">OS #{selectedPin.protocolo}</p>
+                  <p className="text-sm font-bold text-slate-900">{selectedPin.tipo}</p>
+                  <p className="text-xs text-slate-600 truncate">{selectedPin.endereco}</p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <button onClick={() => onSelect(selectedPin)} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold">
+                      Iniciar vistoria
+                    </button>
+                    <a
+                      href={`https://www.google.com/maps/dir/?api=1&destination=${selectedPin.lat},${selectedPin.lng}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-2 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold"
+                    >
+                      Ir agora
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
+            {ativas.length > 6 && (
+              <p className="mt-2 text-[11px] text-slate-500">
+                {ativas.length} OS próximas no mapa. Agrupe por setor para reduzir sobreposição visual.
+              </p>
+            )}
+          </div>
+
+          {rotaDoDia.length > 0 && (
+            <div className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50 p-3">
+              <p className="text-xs text-indigo-700 font-semibold mb-1">🧭 Rota do dia (ordenada por proximidade)</p>
+              <div className="flex flex-wrap gap-2">
+                {rotaDoDia.slice(0, 4).map((d, idx) => (
+                  <button
+                    key={d.id}
+                    onClick={() => onSelect(d)}
+                    className="text-xs px-2.5 py-1.5 rounded-lg bg-white border border-indigo-200 text-indigo-700 font-semibold"
+                  >
+                    {idx + 1}º • #{d.protocolo}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <h3 className="font-bold text-gray-700 mb-3 flex items-center gap-2 md:text-lg">
             <AlertTriangle size={16} className="text-orange-500" /> Tarefas Ativas
           </h3>
@@ -1707,9 +1788,64 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
   );
 }
 
+function FiscalProfileTab({
+  onLogout,
+  onOpenSettings,
+  profilePhoto,
+}: {
+  onLogout: () => void;
+  onOpenSettings: () => void;
+  profilePhoto?: string;
+}) {
+  const { currentUser, getFiscalPontos, isOnline } = useApp();
+  const pontos = getFiscalPontos(currentUser?.id || '');
+
+  return (
+    <div className="p-4 md:p-6 max-w-3xl mx-auto pb-24 lg:pb-8">
+      <div className="bg-white rounded-2xl border shadow-sm p-5">
+        <div className="flex items-center gap-3">
+          {profilePhoto ? (
+            <img src={profilePhoto} alt="Perfil" className="w-14 h-14 rounded-full object-cover border-2 border-blue-300" />
+          ) : (
+            <div className="w-14 h-14 rounded-full bg-blue-600 text-white grid place-items-center font-bold text-xl">
+              {currentUser?.nome?.charAt(0) || 'F'}
+            </div>
+          )}
+          <div>
+            <p className="text-lg font-bold text-slate-900">{currentUser?.nome}</p>
+            <p className="text-sm text-slate-500">Matrícula: {currentUser?.matricula || 'N/I'}</p>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="rounded-xl border bg-slate-50 p-3">
+            <p className="text-xs text-slate-500">Pontuação</p>
+            <p className="text-2xl font-bold text-amber-600">{pontos}</p>
+          </div>
+          <div className="rounded-xl border bg-slate-50 p-3">
+            <p className="text-xs text-slate-500">Conectividade</p>
+            <p className={`text-sm font-semibold ${isOnline ? 'text-green-600' : 'text-amber-600'}`}>
+              {isOnline ? 'Online e sincronizando' : 'Offline (modo local)'}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 space-y-2">
+          <button onClick={onOpenSettings} className="w-full rounded-xl bg-blue-600 text-white py-3 font-semibold text-sm">
+            Abrir configurações
+          </button>
+          <button onClick={onLogout} className="w-full rounded-xl bg-red-50 text-red-700 border border-red-200 py-3 font-semibold text-sm">
+            Sair da conta
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }: { onLogout: () => void; onOpenSettings: () => void; theme: string; profilePhoto?: string }) {
-  const { denuncias, notifications, dismissNotification, addNotification } = useApp();
-  const [tab, setTab] = useState<'home' | 'processos' | 'pontos' | 'mensagens'>('home');
+  const { denuncias, notifications, dismissNotification, addNotification, isOnline } = useApp();
+  const [tab, setTab] = useState<'mapa' | 'processos' | 'mensagens' | 'perfil'>('mapa');
   const [selectedTask, setSelectedTask] = useState<Denuncia | null>(null);
   const [viewingReport, setViewingReport] = useState<Denuncia | null>(null);
   const { getConversas, currentUser } = useApp();
@@ -1719,6 +1855,9 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
   const [notificationPermission, setNotificationPermission] = useState<'granted' | 'denied' | 'default' | 'unsupported'>(
     typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
   );
+  const pendingOfflineReports = denuncias.filter(
+    d => d.fiscal_id === currentUser?.id && d.status === 'em_vistoria'
+  ).length;
 
   // Handle device back button
   useEffect(() => {
@@ -1727,8 +1866,8 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
         setViewingReport(null);
       } else if (selectedTask) {
         setSelectedTask(null);
-      } else if (tab !== 'home') {
-        setTab('home');
+      } else if (tab !== 'mapa') {
+        setTab('mapa');
       }
     };
     window.addEventListener('popstate', handlePopState);
@@ -1753,7 +1892,7 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
     else setViewingReport(null);
   };
   const handleTabChange = (newTab: typeof tab) => {
-    if (newTab !== 'home') window.history.pushState({ view: 'tab' }, '');
+    if (newTab !== 'mapa') window.history.pushState({ view: 'tab' }, '');
     setTab(newTab);
   };
 
@@ -1819,10 +1958,10 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
   }
 
   const navItems = [
-    { id: 'home' as const, icon: Home, label: 'Início' },
-    { id: 'processos' as const, icon: ClipboardList, label: 'Processos' },
-    { id: 'pontos' as const, icon: Trophy, label: 'Pontos' },
+    { id: 'mapa' as const, icon: MapPin, label: 'Mapa' },
+    { id: 'processos' as const, icon: ClipboardList, label: 'Minhas OS' },
     { id: 'mensagens' as const, icon: Send, label: 'Mensagens', badge: totalUnread },
+    { id: 'perfil' as const, icon: User, label: 'Perfil' },
   ];
 
   return (
@@ -1845,6 +1984,14 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
               Ativar
             </button>
           )}
+        </div>
+      )}
+      {!isOnline && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[119] w-[92%] max-w-xl rounded-xl border border-slate-300 bg-slate-50 shadow p-3">
+          <p className="text-xs font-semibold text-slate-700">📶 Você está offline</p>
+          <p className="text-xs text-slate-600">
+            {pendingOfflineReports} relatório(s) aguardando envio quando a conexão voltar.
+          </p>
         </div>
       )}
 
@@ -1913,10 +2060,10 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
       {/* Main content */}
       <div className="lg:ml-60 flex-1">
         <AnimatePresence mode="wait">
-          {tab === 'home' && <FiscalDashboard key="home" denuncias={denuncias} onSelect={handleSelectTask} />}
+          {tab === 'mapa' && <FiscalDashboard key="mapa" denuncias={denuncias} onSelect={handleSelectTask} />}
           {tab === 'processos' && <ProcessosList key="proc" denuncias={denuncias} onSelect={handleSelectTask} onViewReport={handleViewReport} />}
-          {tab === 'pontos' && <PontuacaoView key="pts" />}
-          {tab === 'mensagens' && <Mensagens key="msgs" onBack={() => setTab('home')} filterRole="gerente" />}
+          {tab === 'mensagens' && <Mensagens key="msgs" onBack={() => setTab('mapa')} filterRole="gerente" />}
+          {tab === 'perfil' && <FiscalProfileTab key="profile" onLogout={onLogout} onOpenSettings={onOpenSettings} profilePhoto={profilePhoto} />}
         </AnimatePresence>
       </div>
 
@@ -1936,14 +2083,6 @@ export default function FiscalModule({ onLogout, onOpenSettings, profilePhoto }:
               )}
             </button>
           ))}
-          <button onClick={onOpenSettings} className="flex-1 flex flex-col items-center py-3 gap-1 text-gray-400 hover:text-blue-500 transition">
-            <Settings size={18} />
-            <span className="text-[10px] font-medium">Config.</span>
-          </button>
-          <button onClick={onLogout} className="flex-1 flex flex-col items-center py-3 gap-1 text-gray-400 hover:text-red-500 transition">
-            <LogOut size={20} />
-            <span className="text-[10px] font-medium">Sair</span>
-          </button>
         </div>
       </div>
     </div>
