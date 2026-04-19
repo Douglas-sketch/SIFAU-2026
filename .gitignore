@@ -1,8 +1,10 @@
 node_modules/
 dist/
 .env.local
-.env
+.env.*
+!.env.example
 android/
 ios/
 *.apk
 .DS_Store
+public/runtime-config.local.js
