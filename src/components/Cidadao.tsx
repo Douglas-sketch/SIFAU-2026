@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageCircle, Send, X, MapPin, Camera, Plus, ChevronRight, Clock, CheckCircle, AlertCircle, Eye, Search, ArrowLeft, Shield, Mic, MicOff, User, UserX, Settings, Loader, Navigation, Copy, Share2 } from 'lucide-react';
+import { MessageCircle, Send, X, MapPin, Camera, Plus, ChevronRight, Clock, CheckCircle, AlertCircle, Eye, Search, ArrowLeft, Shield, Mic, MicOff, User, UserX, Settings, Loader, Navigation, Copy, Share2, Download, Trash2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { DenunciaTipo } from '../types';
 import { PhotoGallery } from './PhotoViewer';
 import { compressPhoto } from '../lib/photoCompressor';
+import * as supa from '../lib/supabaseService';
 
 const statusLabels: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
   pendente: { label: 'Pendente', color: 'bg-yellow-100 text-yellow-800', icon: <Clock size={16} /> },
@@ -1085,6 +1086,8 @@ Status: ${statusLabels[status]?.label || status}`;
 export default function CidadaoModule({ onLogin, onOpenSettings }: { onLogin: () => void; onOpenSettings: () => void; theme: string }) {
   const [view, setView] = useState<'home' | 'nova' | 'acompanhar'>('home');
   const [successProtocolo, setSuccessProtocolo] = useState<string | null>(null);
+  const [lgpdMessage, setLgpdMessage] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
+  const [deletionLoading, setDeletionLoading] = useState(false);
   const { denuncias, authEmail } = useApp();
 
   // Filtrar denúncias pelo email do usuário autenticado
@@ -1123,6 +1126,50 @@ export default function CidadaoModule({ onLogin, onOpenSettings }: { onLogin: ()
   const pendentes = minhasDenuncias.filter(d => d.status === 'pendente').length;
   const andamento = minhasDenuncias.filter(d => ['designada', 'em_vistoria', 'aguardando_aprovacao'].includes(d.status)).length;
   const concluidas = minhasDenuncias.filter(d => d.status === 'concluida').length;
+
+  const handleDownloadMyData = () => {
+    if (!cleanAuthEmail || cleanAuthEmail === 'anonymous') {
+      setLgpdMessage({ type: 'error', text: 'É necessário estar autenticado para baixar seus dados.' });
+      return;
+    }
+
+    const payload = {
+      exported_at: new Date().toISOString(),
+      user_email: cleanAuthEmail,
+      total_denuncias: minhasDenuncias.length,
+      denuncias: minhasDenuncias,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `sifau-meus-dados-${cleanAuthEmail.replace(/[^a-z0-9]/gi, '_')}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setLgpdMessage({ type: 'ok', text: 'Arquivo JSON gerado com sucesso.' });
+  };
+
+  const handleRequestDeletion = async () => {
+    if (!cleanAuthEmail || cleanAuthEmail === 'anonymous') {
+      setLgpdMessage({ type: 'error', text: 'É necessário estar autenticado para solicitar exclusão.' });
+      return;
+    }
+
+    setDeletionLoading(true);
+    const result = await supa.requestLgpdAccountDeletion(cleanAuthEmail);
+    setDeletionLoading(false);
+
+    if (result.ok) {
+      setLgpdMessage({ type: 'ok', text: 'Solicitação de exclusão registrada e enviada ao administrador.' });
+      return;
+    }
+
+    setLgpdMessage({
+      type: 'error',
+      text: result.error || 'Não foi possível concluir a solicitação de exclusão agora.',
+    });
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1229,6 +1276,35 @@ export default function CidadaoModule({ onLogin, onOpenSettings }: { onLogin: ()
             </div>
             <ChevronRight size={20} className="text-gray-400" />
           </motion.button>
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 md:p-6 shadow-md border space-y-3">
+          <h3 className="font-bold text-gray-800 md:text-lg">🧾 Meus Dados</h3>
+          <p className="text-sm text-gray-600">
+            Você pode exportar seus dados ou solicitar a exclusão da conta. O processamento ocorre em até <strong>15 dias úteis</strong>.
+          </p>
+
+          <div className="flex flex-col md:flex-row gap-2">
+            <button
+              onClick={handleDownloadMyData}
+              className="flex-1 border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-xl px-4 py-3 font-medium flex items-center justify-center gap-2"
+            >
+              <Download size={18} /> Baixar meus dados
+            </button>
+            <button
+              onClick={handleRequestDeletion}
+              disabled={deletionLoading}
+              className="flex-1 border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-60 rounded-xl px-4 py-3 font-medium flex items-center justify-center gap-2"
+            >
+              <Trash2 size={18} /> {deletionLoading ? 'Enviando...' : 'Solicitar exclusão da conta'}
+            </button>
+          </div>
+
+          {lgpdMessage && (
+            <div className={`rounded-xl border px-3 py-2 text-sm ${lgpdMessage.type === 'ok' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+              {lgpdMessage.text}
+            </div>
+          )}
         </div>
 
         {/* Recent */}
