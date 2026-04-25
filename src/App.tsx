@@ -59,6 +59,13 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
     const p = password.trim();
 
     try {
+      // Fallback local para garantir acesso quando backend ainda não está pronto
+      const local = getLocalAccounts()[e];
+      if (local && local.password === p) {
+        finishAuth(e, 'email', undefined, local.accessType);
+        return;
+      }
+
       if (supabase) {
         // 1) Login principal via tabela do app (Supabase DB), sem depender de confirmação de e-mail do Auth
         const legacyStatus = await supa.checkUserAccountCredentials(e, p);
@@ -132,6 +139,15 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
     const p = password.trim();
 
     try {
+      const localAll = getLocalAccounts();
+      if (localAll[e]) {
+        setError('Este e-mail já está cadastrado. Faça login.');
+        return;
+      }
+
+      // Salva fallback local imediatamente para não bloquear o usuário
+      saveLocalAccount(e, p, accessType, accessType === 'servidor' ? serverType : undefined);
+
       if (supabase) {
         const existsRemote = await supa.userAccountExists(e);
         if (existsRemote) {
