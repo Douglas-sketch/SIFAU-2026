@@ -650,6 +650,18 @@ export async function registerUserAccount(
     } else {
       addLog(`✅ Conta registrada (upsert): ${email}`);
     }
+
+    if (opts?.lgpdConsentAt) {
+      const { error: consentError } = await supabase
+        .from('app_users')
+        .update({ lgpd_consent_at: opts.lgpdConsentAt, updated_at: new Date().toISOString() })
+        .eq('email', email.toLowerCase());
+      if (consentError) {
+        addLog(`⚠️ Não foi possível salvar lgpd_consent_at para ${email}: ${consentError.message}`);
+      } else {
+        addLog(`✅ Consentimento LGPD salvo para ${email}`);
+      }
+    }
   } catch (e: any) {
     addLog(`❌ Exceção registrar conta: ${e?.message}`);
   }

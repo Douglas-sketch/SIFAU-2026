@@ -16,6 +16,7 @@ const THEME_GRADIENTS: Record<AppTheme, string> = {
   default: 'from-blue-800 via-blue-900 to-slate-900',
   dark: 'from-gray-800 via-gray-900 to-black',
 };
+type AccessType = 'denunciante' | 'servidor';
 
 // ═══════════════════════════════════════════════════════════════
 //  SISTEMA DE CONTAS — Supabase-first
@@ -31,6 +32,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [, setGoogleLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [accessType, setAccessType] = useState<AccessType>('denunciante');
   const [serverType, setServerType] = useState<'fiscal' | 'gerente'>('fiscal');
@@ -118,6 +120,10 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
     }
     if (password !== confirmPassword) {
       setError('As senhas não coincidem');
+      return;
+    }
+    if (!privacyAccepted) {
+      setError('Você precisa aceitar a Política de Privacidade para continuar.');
       return;
     }
     setError('');
@@ -954,6 +960,65 @@ function HomeScreen({ onLogin, onCidadao, onOpenSettings, onLogoutAuth, theme, c
   );
 }
 
+function PrivacyPolicyScreen({ theme }: { theme: AppTheme }) {
+  return (
+    <div className={`min-h-screen bg-gradient-to-br ${THEME_GRADIENTS[theme]} px-4 py-8 md:px-8`}>
+      <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-xl border p-6 md:p-10 space-y-5">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Política de Privacidade — SIFAU Ouvidoria Municipal</h1>
+          <p className="text-sm text-gray-500 mt-1">Última atualização: 25/04/2026</p>
+        </div>
+
+        <section>
+          <h2 className="font-semibold text-gray-900">1. Dados coletados</h2>
+          <p className="text-sm text-gray-700 mt-1">
+            Coletamos dados de cadastro (e-mail, perfil de acesso e registros de consentimento), dados das denúncias urbanas (conteúdo, endereço,
+            anexos, status, protocolo, histórico de tramitação) e dados técnicos de acesso para segurança e auditoria.
+          </p>
+        </section>
+
+        <section>
+          <h2 className="font-semibold text-gray-900">2. Finalidade do tratamento</h2>
+          <p className="text-sm text-gray-700 mt-1">
+            Os dados são tratados para registrar, analisar e acompanhar denúncias urbanas, viabilizar comunicação com o cidadão, cumprir dever legal
+            da administração pública e proteger a integridade do serviço de ouvidoria.
+          </p>
+        </section>
+
+        <section>
+          <h2 className="font-semibold text-gray-900">3. Retenção e descarte</h2>
+          <p className="text-sm text-gray-700 mt-1">
+            Os dados são mantidos pelo tempo necessário para execução do serviço público e cumprimento de obrigações legais/regulatórias. Solicitações
+            de exclusão são analisadas em até 15 dias úteis, observadas hipóteses de guarda obrigatória e defesa de direitos.
+          </p>
+        </section>
+
+        <section>
+          <h2 className="font-semibold text-gray-900">4. Direitos do titular</h2>
+          <p className="text-sm text-gray-700 mt-1">
+            Você pode solicitar confirmação de tratamento, acesso, correção, anonimização, portabilidade quando aplicável, eliminação de dados tratados
+            com consentimento, informação sobre compartilhamentos e revisão de decisões automatizadas, nos termos da LGPD (Lei nº 13.709/2018).
+          </p>
+        </section>
+
+        <section>
+          <h2 className="font-semibold text-gray-900">5. Contato do Encarregado (DPO)</h2>
+          <p className="text-sm text-gray-700 mt-1">
+            E-mail: <a className="text-blue-700 underline" href="mailto:dpo@sifau.prefeitura.gov.br">dpo@sifau.prefeitura.gov.br</a><br />
+            Assunto sugerido: “LGPD — Solicitação do Titular”.
+          </p>
+        </section>
+
+        <div className="pt-2">
+          <a href="/" className="inline-flex text-sm font-semibold text-blue-700 hover:text-blue-800 underline">
+            Voltar para o SIFAU
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  APP CONTENT — Fluxo principal
 // ═══════════════════════════════════════════════════════════════
@@ -973,6 +1038,7 @@ function AppContent() {
     const saved = localStorage.getItem('sifau_theme');
     return (saved as AppTheme) || 'default';
   });
+  const isPrivacyRoute = typeof window !== 'undefined' && window.location.pathname === '/privacidade';
 
   // Check if user is already authenticated on load
   useEffect(() => {
@@ -1095,6 +1161,10 @@ function AppContent() {
     localStorage.setItem('sifau_theme', theme);
     applyTheme(theme);
   }, [theme]);
+
+  if (isPrivacyRoute) {
+    return <PrivacyPolicyScreen theme={theme} />;
+  }
 
   // Request essential runtime permissions once per authenticated session
   useEffect(() => {
