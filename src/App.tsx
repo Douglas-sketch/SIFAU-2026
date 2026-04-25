@@ -5,8 +5,8 @@ import CidadaoModule from './components/Cidadao';
 import FiscalModule from './components/Fiscal';
 import GerenteModule from './components/Gerente';
 import Settings, { AppTheme, applyTheme, applyAccessibility, loadSettings } from './components/Settings';
-import { Lock, ArrowLeft, AlertCircle, ChevronDown, Eye, EyeOff, Mail, Users, LogIn, UserPlus, Loader2 } from 'lucide-react';
-import { supabase } from './lib/supabase';
+import { Lock, ArrowLeft, AlertCircle, ChevronDown, Eye, EyeOff, Mail, Users, LogIn, UserPlus, Loader2, BadgeCheck } from 'lucide-react';
+import { supabase, getSupabaseConfigStatus } from './lib/supabase';
 import * as supa from './lib/supabaseService';
 import { getProfilePhoto } from './lib/profilePhoto';
 import { requestEssentialPermissions } from './lib/appPermissions';
@@ -18,97 +18,32 @@ const THEME_GRADIENTS: Record<AppTheme, string> = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-//  SISTEMA DE CONTAS — 100% Local-first + Supabase backup
+//  SISTEMA DE CONTAS — Supabase-first
 // ═══════════════════════════════════════════════════════════════
-const ACCOUNTS_DB = 'sifau_accounts_v3';
-const AUTH_SESSION = 'sifau_session_v3';
-const AUTH_EMAIL_KEY = 'sifau_auth_email';
+type AccessType = 'denunciante' | 'servidor';
 
-// Migrar contas da v2 para v3 (para não perder contas já criadas)
-function migrateAccounts() {
-  try {
-    const v2 = localStorage.getItem('sifau_accounts_v2');
-    const v3 = localStorage.getItem(ACCOUNTS_DB);
-    if (v2 && !v3) {
-      localStorage.setItem(ACCOUNTS_DB, v2);
-      console.log('📦 Contas migradas v2→v3');
-    }
-    const s2 = localStorage.getItem('sifau_session_v2');
-    const s3 = localStorage.getItem(AUTH_SESSION);
-    if (s2 && !s3) {
-      localStorage.setItem(AUTH_SESSION, s2);
-      console.log('📦 Sessão migrada v2→v3');
-    }
-  } catch { /* */ }
-}
-migrateAccounts();
+function clearSession() {}
 
-function loadAccounts(): Record<string, { email: string; password: string; createdAt: string }> {
-  try {
-    return JSON.parse(localStorage.getItem(ACCOUNTS_DB) || '{}');
-  } catch { return {}; }
-}
-
-function saveAccount(email: string, password: string) {
-  const db = loadAccounts();
-  db[email.toLowerCase().trim()] = { 
-    email: email.toLowerCase().trim(), 
-    password, 
-    createdAt: new Date().toISOString() 
-  };
-  localStorage.setItem(ACCOUNTS_DB, JSON.stringify(db));
-  console.log('💾 Conta salva localmente:', email);
-}
-
-function checkAccount(email: string, password: string): 'ok' | 'wrong_password' | 'not_found' {
-  const db = loadAccounts();
-  const acc = db[email.toLowerCase().trim()];
-  if (!acc) return 'not_found';
-  if (acc.password !== password) return 'wrong_password';
-  return 'ok';
-}
-
-function accountExistsLocal(email: string): boolean {
-  const db = loadAccounts();
-  return !!db[email.toLowerCase().trim()];
-}
-
-function saveSession(email: string) {
-  localStorage.setItem(AUTH_SESSION, JSON.stringify({ email, ts: Date.now() }));
-  // CRITICAL: Also save to AUTH_EMAIL_KEY so AppContext can read it
-  localStorage.setItem(AUTH_EMAIL_KEY, email.toLowerCase().trim());
-}
-
-function getSession(): string | null {
-  try {
-    const s = JSON.parse(localStorage.getItem(AUTH_SESSION) || 'null');
-    return s?.email || null;
-  } catch { return null; }
-}
-
-function clearSession() {
-  localStorage.removeItem(AUTH_SESSION);
-  localStorage.removeItem(AUTH_EMAIL_KEY);
-  // DON'T remove ACCOUNTS_DB — keep saved accounts
-}
-
-function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: string) => void; theme: AppTheme }) {
+function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: string, accessType?: AccessType) => void; theme: AppTheme }) {
+  const supabaseStatus = getSupabaseConfigStatus();
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
+  const [accessType, setAccessType] = useState<AccessType>('denunciante');
+  const [serverType, setServerType] = useState<'fiscal' | 'gerente'>('fiscal');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [generatedMatricula, setGeneratedMatricula] = useState<string | null>(null);
+  const [pendingServerAuth, setPendingServerAuth] = useState<{ email: string; role: AccessType } | null>(null);
 
-  const finishAuth = (userEmail: string, provider: string = 'email', userPassword?: string) => {
+  const finishAuth = (userEmail: string, _provider: string = 'email', _userPassword?: string, profileType?: AccessType) => {
     const cleanEmail = userEmail.toLowerCase().trim();
-    saveSession(cleanEmail);
-    supa.registerUserAccount(cleanEmail, provider, userPassword).catch(() => {});
+    const resolvedType = profileType || 'denunciante';
     console.log('✅ Auth completo:', cleanEmail);
-    onAuthenticated(cleanEmail);
+    onAuthenticated(cleanEmail, resolvedType);
   };
 
   const handleEmailLogin = async () => {
@@ -123,34 +58,48 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
 
     try {
       if (supabase) {
+        // 1) Login principal via tabela do app (Supabase DB), sem depender de confirmação de e-mail do Auth
+        const legacyStatus = await supa.checkUserAccountCredentials(e, p);
+        if (legacyStatus === 'ok') {
+          const roleInfo = await supa.getAccountAccessByEmail(e);
+          finishAuth(e, 'email', undefined, roleInfo.accessType);
+          await supa.registerUserAccount(e, 'email', undefined, {
+            accessType: roleInfo.accessType,
+            serverType: roleInfo.serverType,
+          });
+          return;
+        }
+
+        // 2) Compatibilidade: contas que existem apenas no Supabase Auth
         const { error: authError } = await supabase.auth.signInWithPassword({ email: e, password: p });
         if (!authError) {
-          saveAccount(e, p);
-          finishAuth(e);
+          const roleInfo = await supa.getAccountAccessByEmail(e);
+          finishAuth(e, 'email', undefined, roleInfo.accessType);
+          await supa.registerUserAccount(e, 'email', undefined, {
+            accessType: roleInfo.accessType,
+            serverType: roleInfo.serverType,
+          });
           return;
         }
 
         const msg = (authError.message || '').toLowerCase();
         if (msg.includes('invalid login credentials')) {
-          setError('E-mail ou senha incorretos. Verifique seus dados.');
+          setError(
+            legacyStatus === 'wrong_password'
+              ? 'Senha incorreta. Verifique e tente novamente.'
+              : 'Conta não encontrada no Auth. Se sua conta é antiga, confirme variáveis do Supabase e tabela user_accounts.'
+          );
           return;
         }
         if (msg.includes('email not confirmed')) {
-          setError('Confirme seu e-mail para entrar na conta.');
+          setError('Conta encontrada, mas o Supabase Auth está exigindo confirmação. Para este app, entre com a senha cadastrada em user_accounts.');
           return;
         }
 
         setError('Não foi possível entrar agora. Tente novamente em instantes.');
         return;
       }
-
-      const result = checkAccount(e, p);
-      if (result === 'ok') {
-        finishAuth(e);
-        return;
-      }
-
-      setError(result === 'wrong_password' ? 'Senha incorreta. Tente novamente.' : 'Conta não encontrada neste dispositivo. Conecte à internet para validar sua conta.');
+      setError('Supabase não configurado para autenticação.');
     } catch {
       setError('Erro ao conectar. Tente novamente.');
     } finally {
@@ -183,143 +132,38 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           setError('Este e-mail já está cadastrado. Faça login.');
           return;
         }
-
-        const { data, error: signUpError } = await supabase.auth.signUp({
-          email: e,
-          password: p,
-          options: { data: { app: 'sifau' } },
+        
+        // Cadastro direto no banco do app (user_accounts/app_users), sem exigir confirmação do Auth
+        await supa.registerUserAccount(e, 'email', p, {
+          accessType,
+          serverType: accessType === 'servidor' ? serverType : null,
         });
-
-        if (signUpError) {
-          const msg = (signUpError.message || '').toLowerCase();
-          if (msg.includes('already registered') || msg.includes('already exists')) {
-            setError('Este e-mail já está cadastrado. Faça login.');
-            return;
+        let serverMsg = '';
+        let createdMatricula: string | null = null;
+        if (accessType === 'servidor') {
+          const created = await supa.ensureServerAccessByEmail(e, p, serverType);
+          if (created?.matricula) {
+            createdMatricula = created.matricula;
+            serverMsg = ` Matrícula única gerada: ${created.matricula}.`;
           }
-          setError('Não foi possível criar a conta agora. Tente novamente.');
+        }
+        if (accessType === 'servidor' && createdMatricula) {
+          setGeneratedMatricula(createdMatricula);
+          setPendingServerAuth({ email: e, role: accessType });
+          setSuccess(`Conta de servidor criada com sucesso!${serverMsg}`);
+          setPassword('');
+          setConfirmPassword('');
           return;
         }
 
-        saveAccount(e, p);
-        if (data?.session) {
-          finishAuth(e);
-        } else {
-          setSuccess('Conta criada com sucesso! Se necessário, confirme seu e-mail para entrar.');
-          setMode('login');
-          setPassword('');
-          setConfirmPassword('');
-        }
+        finishAuth(e, 'email', undefined, accessType);
         return;
       }
-
-      if (accountExistsLocal(e)) {
-        setError('Este e-mail já está cadastrado neste dispositivo. Faça login.');
-        return;
-      }
-      saveAccount(e, p);
-      finishAuth(e);
-    } catch {
+      setError('Supabase não configurado para cadastro.');
+    } catch (_error) {
       setError('Erro ao criar conta. Tente novamente.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    setError('');
-    setGoogleLoading(true);
-    try {
-      if (supabase) {
-        // Detect if running inside Capacitor (Android app)
-        const isCapacitor = !!(window as any).Capacitor;
-        
-        if (isCapacitor) {
-          // ANDROID APP: Open in-app browser, then capture redirect
-          const redirectUrl = 'com.sifau.app://auth/callback';
-          
-          const { data, error: authError } = await supabase.auth.signInWithOAuth({
-            provider: 'google',
-            options: {
-              redirectTo: redirectUrl,
-              skipBrowserRedirect: true, // Don't auto-redirect, we handle it
-            },
-          });
-          
-          if (authError) {
-            setError('Erro ao conectar com Google: ' + authError.message);
-            setGoogleLoading(false);
-            return;
-          }
-          
-          if (data?.url) {
-            // Open OAuth inside the app (do not leave the app)
-            try {
-              const { Browser } = await import('@capacitor/browser');
-              const { App: CapApp } = await import('@capacitor/app');
-
-              let browserFinishedListener: { remove: () => void } | null = null;
-              const appUrlListener = await CapApp.addListener('appUrlOpen', async (event: { url: string }) => {
-                const url = new URL(event.url);
-                const params = new URLSearchParams(url.hash.substring(1)); // After #
-                const accessToken = params.get('access_token');
-                const refreshToken = params.get('refresh_token');
-
-                if (accessToken && refreshToken) {
-                  const { data: sessionData } = await supabase!.auth.setSession({
-                    access_token: accessToken,
-                    refresh_token: refreshToken,
-                  });
-
-                  if (sessionData?.user?.email) {
-                    finishAuth(sessionData.user.email, 'google');
-                  }
-                }
-
-                await Browser.close();
-                appUrlListener.remove();
-                browserFinishedListener?.remove();
-                setGoogleLoading(false);
-              });
-
-              browserFinishedListener = await Browser.addListener('browserFinished', () => {
-                appUrlListener.remove();
-                browserFinishedListener?.remove();
-                setGoogleLoading(false);
-              });
-
-              await Browser.open({ url: data.url, windowName: '_self' });
-            } catch {
-              setError('Não foi possível abrir o login do Google dentro do app.');
-              setGoogleLoading(false);
-            }
-          } else {
-            setError('Não foi possível obter URL de login do Google.');
-            setGoogleLoading(false);
-          }
-        } else {
-          // WEB BROWSER: Normal redirect flow
-          const redirectUrl = window.location.origin + window.location.pathname;
-          
-          const { error: authError } = await supabase.auth.signInWithOAuth({
-            provider: 'google',
-            options: {
-              redirectTo: redirectUrl,
-            },
-          });
-          
-          if (authError) {
-            setError('Erro ao conectar com Google: ' + authError.message);
-            setGoogleLoading(false);
-          }
-          // If no error, browser will redirect to Google login page
-        }
-      } else {
-        setError('Google login requer conexão com o servidor.');
-        setGoogleLoading(false);
-      }
-    } catch (e: any) {
-      setError(e?.message || 'Erro ao conectar com Google.');
-      setGoogleLoading(false);
     }
   };
 
@@ -343,12 +187,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           setTimeout(() => { setMode('login'); setSuccess(''); }, 4000);
         }
       } else {
-        // Verificar se existe localmente
-        if (checkAccount(trimmedEmail, '') !== 'not_found') {
-          setSuccess('Modo offline. Sua conta existe localmente. Tente lembrar a senha ou contate o administrador.');
-        } else {
-          setError('Conta não encontrada.');
-        }
+        setError('Recuperação de senha indisponível sem Supabase.');
       }
     } catch (e: any) {
       setError(e?.message || 'Erro ao enviar e-mail de recuperação.');
@@ -388,7 +227,8 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
             {mode !== 'forgot' && (
               <div className="flex bg-white/5 rounded-xl p-1 mb-5">
                 <button
-                  onClick={() => { setMode('login'); setError(''); setSuccess(''); }}
+                  type="button"
+                  onClick={() => { setMode('login'); setError(''); setSuccess(''); setGeneratedMatricula(null); setPendingServerAuth(null); }}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
                     mode === 'login' ? 'bg-blue-600 text-white shadow-lg' : 'text-white/60 hover:text-white/80'
                   }`}
@@ -396,7 +236,8 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                   <LogIn size={16} /> Entrar
                 </button>
                 <button
-                  onClick={() => { setMode('register'); setError(''); setSuccess(''); }}
+                  type="button"
+                  onClick={() => { setMode('register'); setError(''); setSuccess(''); setGeneratedMatricula(null); setPendingServerAuth(null); }}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
                     mode === 'register' ? 'bg-blue-600 text-white shadow-lg' : 'text-white/60 hover:text-white/80'
                   }`}
@@ -429,6 +270,14 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
               >
                 <AlertCircle size={16} className="shrink-0" /> {error}
               </motion.div>
+            )}
+
+            {!supabaseStatus.configured && (
+              <div className="bg-amber-500/20 border border-amber-400/30 rounded-xl p-3 text-amber-100 text-xs mb-4">
+                Supabase não configurado neste build. Defina <strong>VITE_SUPABASE_URL</strong> e <strong>VITE_SUPABASE_ANON_KEY</strong> no build
+                ou configure em <code>public/runtime-config.js</code> (window.__SIFAU_SUPABASE_URL / window.__SIFAU_SUPABASE_ANON_KEY)
+                ou salve no localStorage as chaves <code>sifau_supabase_url</code> e <code>sifau_supabase_anon_key</code>.
+              </div>
             )}
 
             {/* Success */}
@@ -475,6 +324,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                       className="w-full bg-white/10 border border-white/15 rounded-xl pl-10 pr-12 py-3 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm"
                     />
                     <button
+                      type="button"
                       onClick={() => setShowPassword(!showPassword)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70 transition"
                     >
@@ -502,8 +352,41 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                 </div>
               )}
 
+              {mode === 'register' && accessType === 'servidor' && (
+                <div>
+                  <label className="text-xs text-blue-200/80 mb-1 block">Perfil de servidor</label>
+                  <select
+                    value={serverType}
+                    onChange={e => setServerType(e.target.value as 'fiscal' | 'gerente')}
+                    className="w-full bg-white/10 border border-white/15 rounded-xl px-3 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm"
+                  >
+                    <option value="fiscal" className="text-black">Fiscal</option>
+                    <option value="gerente" className="text-black">Gerente</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Access Type */}
+              {mode === 'register' && (
+                <div>
+                  <label className="text-xs text-blue-200/80 mb-1 block">Tipo de acesso</label>
+                  <select
+                    value={accessType}
+                    onChange={e => setAccessType(e.target.value as AccessType)}
+                    className="w-full bg-white/10 border border-white/15 rounded-xl px-3 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm"
+                  >
+                    <option value="denunciante" className="text-black">Apenas Denunciante</option>
+                    <option value="servidor" className="text-black">Servidor (Fiscal/Gerente)</option>
+                  </select>
+                  <p className="text-[11px] text-blue-200/70 mt-1">
+                    Denunciantes usam o módulo cidadão. Servidores também podem acessar área restrita com matrícula e senha.
+                  </p>
+                </div>
+              )}
+
               {/* Submit button */}
               <button
+                type="button"
                 onClick={mode === 'forgot' ? handleForgotPassword : mode === 'login' ? handleEmailLogin : handleEmailRegister}
                 disabled={loading}
                 className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white rounded-xl py-3 font-semibold transition flex items-center justify-center gap-2 text-sm"
@@ -519,9 +402,32 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                 )}
               </button>
 
+              {generatedMatricula && (
+                <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/15 p-4 text-emerald-100">
+                  <div className="flex items-center gap-2 mb-1">
+                    <BadgeCheck size={16} className="text-emerald-300" />
+                    <span className="text-xs font-semibold uppercase tracking-wide">Matrícula gerada</span>
+                  </div>
+                  <p className="text-2xl font-black tracking-wider text-white">{generatedMatricula}</p>
+                  <p className="text-[11px] text-emerald-100/80 mt-1">
+                    Guarde esta matrícula para acesso da área de servidor.
+                  </p>
+                  {pendingServerAuth && (
+                    <button
+                      type="button"
+                      onClick={() => finishAuth(pendingServerAuth.email, 'email', undefined, pendingServerAuth.role)}
+                      className="mt-3 w-full rounded-lg bg-emerald-500/80 hover:bg-emerald-400 text-emerald-950 font-semibold py-2 text-sm transition"
+                    >
+                      Entrar agora como servidor
+                    </button>
+                  )}
+                </div>
+              )}
+
               {/* Forgot password link */}
               {mode === 'login' && (
                 <button
+                  type="button"
                   onClick={() => { setMode('forgot'); setError(''); setSuccess(''); }}
                   className="w-full text-blue-300/70 hover:text-blue-200 text-xs transition py-1"
                 >
@@ -529,9 +435,20 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                 </button>
               )}
 
+              {mode === 'login' && (
+                <button
+                  type="button"
+                  onClick={() => { setMode('register'); setError(''); setSuccess(''); setGeneratedMatricula(null); setPendingServerAuth(null); }}
+                  className="w-full text-blue-200 hover:text-white text-xs transition py-1 underline"
+                >
+                  Não tem conta? Criar Conta
+                </button>
+              )}
+
               {/* Back to login from forgot */}
               {mode === 'forgot' && (
                 <button
+                  type="button"
                   onClick={() => { setMode('login'); setError(''); setSuccess(''); }}
                   className="w-full text-blue-300/70 hover:text-blue-200 text-xs transition py-1 flex items-center justify-center gap-1"
                 >
@@ -540,35 +457,6 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
               )}
             </div>
 
-            {/* Divider */}
-            {mode !== 'forgot' && (
-              <div className="flex items-center gap-3 my-4">
-                <div className="flex-1 h-px bg-white/10"></div>
-                <span className="text-white/30 text-xs">ou</span>
-                <div className="flex-1 h-px bg-white/10"></div>
-              </div>
-            )}
-
-            {/* Google Login */}
-            {mode !== 'forgot' && (
-              <button
-                onClick={handleGoogleLogin}
-                disabled={googleLoading}
-                className="w-full bg-white/10 hover:bg-white/15 border border-white/15 text-white rounded-xl py-3 font-medium transition flex items-center justify-center gap-3 text-sm"
-              >
-                {googleLoading ? (
-                  <Loader2 size={18} className="animate-spin" />
-                ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24">
-                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
-                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                  </svg>
-                )}
-                {googleLoading ? 'Conectando...' : 'Continuar com Google'}
-              </button>
-            )}
           </motion.div>
 
           {/* Footer info */}
@@ -710,6 +598,7 @@ function LoginScreen({ onBack, onSuccess, theme }: { onBack: () => void; onSucce
   const [matricula, setMatricula] = useState('');
   const [emailFiscal, setEmailFiscal] = useState('');
   const [nomeFiscal, setNomeFiscal] = useState('');
+  const [tipoServidor, setTipoServidor] = useState<'fiscal' | 'gerente'>('fiscal');
   const [senha, setSenha] = useState('');
   const [confirmSenha, setConfirmSenha] = useState('');
   const [showSenha, setShowSenha] = useState(false);
@@ -754,14 +643,14 @@ function LoginScreen({ onBack, onSuccess, theme }: { onBack: () => void; onSucce
     setSuccess('');
     setLoading(true);
     try {
-      const created = await registerFiscalAutomatico(emailFiscal, senha, nomeFiscal);
+      const created = await registerFiscalAutomatico(emailFiscal, senha, nomeFiscal, tipoServidor);
       if (!created) {
         setError('Não foi possível criar o acesso agora.');
         return;
       }
 
       setMatricula(created.matricula);
-      setSuccess(`Acesso criado com sucesso! Matrícula gerada: ${created.matricula}`);
+      setSuccess(`Acesso ${tipoServidor} criado com sucesso! Matrícula gerada: ${created.matricula}`);
       setMode('login');
       setConfirmSenha('');
     } catch {
@@ -809,7 +698,7 @@ function LoginScreen({ onBack, onSuccess, theme }: { onBack: () => void; onSucce
               onClick={() => { setMode('register'); setError(''); setSuccess(''); }}
               className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'register' ? 'bg-blue-600 text-white' : 'text-white/70'}`}
             >
-              Novo Fiscal
+              Novo Servidor
             </button>
           </div>
 
@@ -854,6 +743,17 @@ function LoginScreen({ onBack, onSuccess, theme }: { onBack: () => void; onSucce
                     placeholder="fiscal@prefeitura.gov.br"
                     className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 md:py-4 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-400 md:text-lg"
                   />
+                </div>
+                <div>
+                  <label className="text-sm md:text-base text-blue-200 mb-1 block">Tipo de servidor</label>
+                  <select
+                    value={tipoServidor}
+                    onChange={e => setTipoServidor(e.target.value as 'fiscal' | 'gerente')}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 md:py-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400 md:text-lg"
+                  >
+                    <option value="fiscal" className="text-black">Fiscal</option>
+                    <option value="gerente" className="text-black">Gerente</option>
+                  </select>
                 </div>
                 <div>
                   <label className="text-sm md:text-base text-blue-200 mb-1 block">Nome (opcional)</label>
@@ -954,12 +854,14 @@ function LoginScreen({ onBack, onSuccess, theme }: { onBack: () => void; onSucce
 // ═══════════════════════════════════════════════════════════════
 //  HOME SCREEN (Cidadão ou Servidor)
 // ═══════════════════════════════════════════════════════════════
-function HomeScreen({ onLogin, onCidadao, onOpenSettings, onLogoutAuth, theme }: { 
+function HomeScreen({ onLogin, onCidadao, onOpenSettings, onLogoutAuth, theme, canAccessServer, warning }: { 
   onLogin: () => void; 
   onCidadao: () => void; 
   onOpenSettings: () => void;
   onLogoutAuth: () => void;
   theme: AppTheme;
+  canAccessServer: boolean;
+  warning?: string;
 }) {
   return (
     <motion.div
@@ -1010,7 +912,11 @@ function HomeScreen({ onLogin, onCidadao, onOpenSettings, onLogoutAuth, theme }:
             {/* Server button */}
             <button
               onClick={onLogin}
-              className="w-full bg-blue-600/80 backdrop-blur border border-blue-500/30 hover:bg-blue-600 text-white rounded-2xl py-4 md:py-5 px-6 transition group"
+              className={`w-full backdrop-blur border rounded-2xl py-4 md:py-5 px-6 transition group ${
+                canAccessServer
+                  ? 'bg-blue-600/80 border-blue-500/30 hover:bg-blue-600 text-white'
+                  : 'bg-slate-700/60 border-slate-500/20 text-slate-300 cursor-not-allowed'
+              }`}
             >
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center group-hover:bg-white/20 transition">
@@ -1018,11 +924,20 @@ function HomeScreen({ onLogin, onCidadao, onOpenSettings, onLogoutAuth, theme }:
                 </div>
                 <div className="text-left flex-1">
                   <p className="font-bold text-base md:text-lg">Sou Servidor</p>
-                  <p className="text-xs md:text-sm text-blue-200/80">Fiscal ou Gerente — Login necessário</p>
+                  <p className="text-xs md:text-sm text-blue-200/80">
+                    {canAccessServer
+                      ? 'Fiscal ou Gerente — Login necessário'
+                      : 'Disponível somente para contas com perfil Servidor'}
+                  </p>
                 </div>
                 <ChevronDown size={20} className="text-white/40 -rotate-90" />
               </div>
             </button>
+            {!!warning && (
+              <div className="bg-amber-500/20 border border-amber-400/30 rounded-xl p-3 text-amber-100 text-xs text-left">
+                {warning}
+              </div>
+            )}
           </motion.div>
 
           {/* Footer */}
@@ -1062,6 +977,8 @@ function HomeScreen({ onLogin, onCidadao, onOpenSettings, onLogoutAuth, theme }:
 function AppContent() {
   const { currentUser, logout, setAuthEmail, authEmail } = useApp();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null); // null = checking
+  const [accessType, setAccessType] = useState<AccessType>('denunciante');
+  const [homeError, setHomeError] = useState('');
   const [screen, setScreen] = useState<'home' | 'login' | 'cidadao'>(() => {
     // Restaurar tela salva para não voltar à home
     const saved = sessionStorage.getItem('sifau_screen');
@@ -1082,48 +999,49 @@ function AppContent() {
     if (settings.theme) setTheme(settings.theme);
 
     async function checkAuth() {
-      // 1. Verificar sessão local salva
-      const savedEmail = getSession();
-      if (savedEmail) {
-        console.log('🔄 Sessão restaurada:', savedEmail);
-        setAuthEmail(savedEmail);
-        supa.registerUserAccount(savedEmail, 'session').catch(() => {});
-        setIsAuthenticated(true);
-        return;
-      }
-      
-      // 2. Verificar sessão Supabase Auth (Google OAuth redirect)
+      // Verificar sessão Supabase Auth
       if (supabase) {
         try {
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.user?.email) {
             const sessionEmail = session.user.email;
             console.log('🔄 Sessão Supabase restaurada:', sessionEmail);
-            saveSession(sessionEmail);
+            const roleInfo = await supa.getAccountAccessByEmail(sessionEmail);
             setAuthEmail(sessionEmail);
-            supa.registerUserAccount(sessionEmail, 'google').catch(() => {});
+            setAccessType(roleInfo.accessType);
+            supa.registerUserAccount(sessionEmail, 'session', undefined, {
+              accessType: roleInfo.accessType,
+              serverType: roleInfo.serverType,
+            }).catch(() => {});
             setIsAuthenticated(true);
             return;
           }
         } catch { /* continue */ }
       }
       
-      // 3. Nenhuma sessão encontrada
       setIsAuthenticated(false);
     }
 
     checkAuth();
 
-    // Listen for auth state changes (Google OAuth redirect)
+    // Listen for auth state changes
     if (supabase) {
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         if (session?.user?.email) {
           const sessionEmail = session.user.email;
-          setAuthEmail(sessionEmail);
-          saveSession(sessionEmail);
-          saveAccount(sessionEmail, 'google-auth');
-          supa.registerUserAccount(sessionEmail, session.user?.app_metadata?.provider || 'google').catch(() => {});
-          setIsAuthenticated(true);
+          supa.getAccountAccessByEmail(sessionEmail).then((roleInfo) => {
+            setAuthEmail(sessionEmail);
+            setAccessType(roleInfo.accessType);
+            supa.registerUserAccount(sessionEmail, session.user?.app_metadata?.provider || 'email', undefined, {
+              accessType: roleInfo.accessType,
+              serverType: roleInfo.serverType,
+            }).catch(() => {});
+            setIsAuthenticated(true);
+          }).catch(() => {
+            setAuthEmail(sessionEmail);
+            setAccessType('denunciante');
+            setIsAuthenticated(true);
+          });
         }
       });
       return () => subscription.unsubscribe();
@@ -1216,11 +1134,12 @@ function AppContent() {
     if (supabase) {
       try { await supabase.auth.signOut(); } catch { /* ignore */ }
     }
-    // Remover sessão ativa mas NÃO as credenciais salvas (sifau_accounts_v2)
     clearSession();
     sessionStorage.removeItem('sifau_screen');
     setIsAuthenticated(false);
     setAuthEmail('anonymous');
+    setAccessType('denunciante');
+    setHomeError('');
     setScreen('home');
     logout();
   };
@@ -1248,8 +1167,9 @@ function AppContent() {
       <AnimatePresence mode="wait">
         <AuthScreen
           key="auth"
-          onAuthenticated={(email?: string) => {
+          onAuthenticated={(email?: string, role?: AccessType) => {
             if (email) setAuthEmail(email);
+            if (role) setAccessType(role);
             setIsAuthenticated(true);
           }}
           theme={theme}
@@ -1322,6 +1242,24 @@ function AppContent() {
 
   // Login screen
   if (screen === 'login') {
+    if (accessType !== 'servidor') {
+      return (
+        <AnimatePresence mode="wait">
+          <HomeScreen
+            key="home-locked"
+            onLogin={() => {
+              setHomeError('Seu perfil é apenas denunciante. Para acessar área restrita, entre com uma conta de servidor.');
+            }}
+            onCidadao={() => navigateTo('cidadao')}
+            onOpenSettings={openSettings}
+            onLogoutAuth={handleLogoutAuth}
+            theme={theme}
+            canAccessServer={false}
+            warning={homeError || 'Seu cadastro atual é apenas denunciante.'}
+          />
+        </AnimatePresence>
+      );
+    }
     return (
       <AnimatePresence mode="wait">
         <LoginScreen
@@ -1354,11 +1292,20 @@ function AppContent() {
     <AnimatePresence mode="wait">
       <HomeScreen
         key="home"
-        onLogin={() => navigateTo('login')}
+        onLogin={() => {
+          if (accessType !== 'servidor') {
+            setHomeError('Seu perfil é apenas denunciante. Cadastre-se como Servidor para usar matrícula/senha.');
+            return;
+          }
+          setHomeError('');
+          navigateTo('login');
+        }}
         onCidadao={() => navigateTo('cidadao')}
         onOpenSettings={openSettings}
         onLogoutAuth={handleLogoutAuth}
         theme={theme}
+        canAccessServer={accessType === 'servidor'}
+        warning={homeError}
       />
     </AnimatePresence>
   );
