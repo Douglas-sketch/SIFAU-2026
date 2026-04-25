@@ -441,6 +441,16 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                 </button>
               )}
 
+              {mode === 'login' && (
+                <button
+                  type="button"
+                  onClick={() => { setMode('register'); setError(''); setSuccess(''); setGeneratedMatricula(null); setPendingServerAuth(null); }}
+                  className="w-full text-blue-200 hover:text-white text-xs transition py-1 underline"
+                >
+                  Não tem conta? Criar Conta
+                </button>
+              )}
+
               {/* Back to login from forgot */}
               {mode === 'forgot' && (
                 <button
