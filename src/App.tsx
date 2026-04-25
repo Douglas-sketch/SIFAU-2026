@@ -40,6 +40,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const [success, setSuccess] = useState('');
   const [generatedMatricula, setGeneratedMatricula] = useState<string | null>(null);
   const [pendingServerAuth, setPendingServerAuth] = useState<{ email: string; role: AccessType } | null>(null);
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
 
   const finishAuth = (userEmail: string, _provider: string = 'email', _userPassword?: string, profileType?: AccessType) => {
     const cleanEmail = userEmail.toLowerCase().trim();
@@ -122,6 +123,10 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
       setError('As senhas não coincidem');
       return;
     }
+    if (!privacyAccepted) {
+      setError('Você precisa aceitar a Política de Privacidade para continuar.');
+      return;
+    }
     setError('');
     setLoading(true);
     const e = email.trim().toLowerCase();
@@ -139,6 +144,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         await supa.registerUserAccount(e, 'email', p, {
           accessType,
           serverType: accessType === 'servidor' ? serverType : null,
+          lgpdConsentAt: new Date().toISOString(),
         });
         let serverMsg = '';
         let createdMatricula: string | null = null;
@@ -379,6 +385,29 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                   </select>
                   <p className="text-[11px] text-blue-200/70 mt-1">
                     Denunciantes usam o módulo cidadão. Servidores também podem acessar área restrita com matrícula e senha.
+                  </p>
+                </div>
+              )}
+
+              {mode === 'register' && (
+                <div className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-2">
+                  <label className="flex items-start gap-2 text-xs text-blue-100 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={privacyAccepted}
+                      onChange={(e) => setPrivacyAccepted(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      Li e aceito a{' '}
+                      <a href="/privacidade" className="underline text-blue-300 hover:text-blue-200" target="_blank" rel="noreferrer">
+                        Política de Privacidade
+                      </a>
+                      .
+                    </span>
+                  </label>
+                  <p className="text-[11px] text-blue-200/80">
+                    Seus dados são usados apenas para registro e acompanhamento de denúncias urbanas conforme a LGPD (Lei 13.709/2018).
                   </p>
                 </div>
               )}
@@ -956,6 +985,65 @@ function HomeScreen({ onLogin, onCidadao, onOpenSettings, onLogoutAuth, theme, c
   );
 }
 
+function PrivacyPolicyScreen({ theme }: { theme: AppTheme }) {
+  return (
+    <div className={`min-h-screen bg-gradient-to-br ${THEME_GRADIENTS[theme]} px-4 py-8 md:px-8`}>
+      <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-xl border p-6 md:p-10 space-y-5">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Política de Privacidade — SIFAU Ouvidoria Municipal</h1>
+          <p className="text-sm text-gray-500 mt-1">Última atualização: 25/04/2026</p>
+        </div>
+
+        <section>
+          <h2 className="font-semibold text-gray-900">1. Dados coletados</h2>
+          <p className="text-sm text-gray-700 mt-1">
+            Coletamos dados de cadastro (e-mail, perfil de acesso e registros de consentimento), dados das denúncias urbanas (conteúdo, endereço,
+            anexos, status, protocolo, histórico de tramitação) e dados técnicos de acesso para segurança e auditoria.
+          </p>
+        </section>
+
+        <section>
+          <h2 className="font-semibold text-gray-900">2. Finalidade do tratamento</h2>
+          <p className="text-sm text-gray-700 mt-1">
+            Os dados são tratados para registrar, analisar e acompanhar denúncias urbanas, viabilizar comunicação com o cidadão, cumprir dever legal
+            da administração pública e proteger a integridade do serviço de ouvidoria.
+          </p>
+        </section>
+
+        <section>
+          <h2 className="font-semibold text-gray-900">3. Retenção e descarte</h2>
+          <p className="text-sm text-gray-700 mt-1">
+            Os dados são mantidos pelo tempo necessário para execução do serviço público e cumprimento de obrigações legais/regulatórias. Solicitações
+            de exclusão são analisadas em até 15 dias úteis, observadas hipóteses de guarda obrigatória e defesa de direitos.
+          </p>
+        </section>
+
+        <section>
+          <h2 className="font-semibold text-gray-900">4. Direitos do titular</h2>
+          <p className="text-sm text-gray-700 mt-1">
+            Você pode solicitar confirmação de tratamento, acesso, correção, anonimização, portabilidade quando aplicável, eliminação de dados tratados
+            com consentimento, informação sobre compartilhamentos e revisão de decisões automatizadas, nos termos da LGPD (Lei nº 13.709/2018).
+          </p>
+        </section>
+
+        <section>
+          <h2 className="font-semibold text-gray-900">5. Contato do Encarregado (DPO)</h2>
+          <p className="text-sm text-gray-700 mt-1">
+            E-mail: <a className="text-blue-700 underline" href="mailto:dpo@sifau.prefeitura.gov.br">dpo@sifau.prefeitura.gov.br</a><br />
+            Assunto sugerido: “LGPD — Solicitação do Titular”.
+          </p>
+        </section>
+
+        <div className="pt-2">
+          <a href="/" className="inline-flex text-sm font-semibold text-blue-700 hover:text-blue-800 underline">
+            Voltar para o SIFAU
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  APP CONTENT — Fluxo principal
 // ═══════════════════════════════════════════════════════════════
@@ -975,6 +1063,7 @@ function AppContent() {
     const saved = localStorage.getItem('sifau_theme');
     return (saved as AppTheme) || 'default';
   });
+  const isPrivacyRoute = typeof window !== 'undefined' && window.location.pathname === '/privacidade';
 
   // Check if user is already authenticated on load
   useEffect(() => {
@@ -1097,6 +1186,10 @@ function AppContent() {
     localStorage.setItem('sifau_theme', theme);
     applyTheme(theme);
   }, [theme]);
+
+  if (isPrivacyRoute) {
+    return <PrivacyPolicyScreen theme={theme} />;
+  }
 
   // Request essential runtime permissions once per authenticated session
   useEffect(() => {

@@ -15,6 +15,8 @@ create table app_users (
   server_type text check (server_type in ('fiscal','gerente')),
   provider text default 'email',
   senha_legacy text,
+  lgpd_consent_at timestamptz,
+  deletion_requested_at timestamptz,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );

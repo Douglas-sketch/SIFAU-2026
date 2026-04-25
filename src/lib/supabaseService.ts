@@ -535,7 +535,11 @@ export async function registerUserAccount(
   email: string,
   provider: string = 'email',
   password?: string,
-  opts?: { accessType?: 'denunciante' | 'servidor'; serverType?: 'fiscal' | 'gerente' | null }
+  opts?: {
+    accessType?: 'denunciante' | 'servidor';
+    serverType?: 'fiscal' | 'gerente' | null;
+    lgpdConsentAt?: string;
+  }
 ): Promise<void> {
   // NÃO depende de ok() — tenta SEMPRE salvar no Supabase diretamente
   if (!supabase || !email || email === 'anonymous') {
@@ -602,8 +606,57 @@ export async function registerUserAccount(
     } else {
       addLog(`✅ Conta registrada (upsert): ${email}`);
     }
+
+    if (opts?.lgpdConsentAt) {
+      const { error: consentError } = await supabase
+        .from('app_users')
+        .update({ lgpd_consent_at: opts.lgpdConsentAt, updated_at: new Date().toISOString() })
+        .eq('email', email.toLowerCase());
+      if (consentError) {
+        addLog(`⚠️ Não foi possível salvar lgpd_consent_at para ${email}: ${consentError.message}`);
+      } else {
+        addLog(`✅ Consentimento LGPD salvo para ${email}`);
+      }
+    }
   } catch (e: any) {
     addLog(`❌ Exceção registrar conta: ${e?.message}`);
+  }
+}
+
+export async function requestLgpdAccountDeletion(email: string): Promise<{ ok: boolean; requestedAt?: string; error?: string }> {
+  if (!supabase || !email || email === 'anonymous') {
+    return { ok: false, error: 'E-mail inválido para exclusão.' };
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const requestedAt = new Date().toISOString();
+
+  try {
+    const { error: updateError } = await supabase
+      .from('app_users')
+      .update({ deletion_requested_at: requestedAt, updated_at: requestedAt })
+      .eq('email', cleanEmail);
+
+    if (updateError) {
+      return { ok: false, error: updateError.message };
+    }
+
+    const { error: invokeError } = await supabase.functions.invoke('notify-account-deletion-request', {
+      body: {
+        email: cleanEmail,
+        requestedAt,
+        source: 'sifau-cidadao-perfil',
+      },
+    });
+
+    if (invokeError) {
+      addLog(`⚠️ Edge Function de exclusão retornou erro para ${cleanEmail}: ${invokeError.message}`);
+      return { ok: false, requestedAt, error: `Solicitação registrada, mas falhou ao notificar admin: ${invokeError.message}` };
+    }
+
+    return { ok: true, requestedAt };
+  } catch (e: any) {
+    return { ok: false, requestedAt, error: e?.message || 'Erro ao solicitar exclusão.' };
   }
 }
 
