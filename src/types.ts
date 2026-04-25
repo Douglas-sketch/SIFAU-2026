@@ -35,6 +35,8 @@ export interface Denuncia {
   fotos: string[];
   motivo_rejeicao?: string;
   auth_email?: string;
+  ia_tipo_sugerido?: DenunciaTipo;
+  ia_urgencia_sugerida?: 'baixa' | 'media' | 'alta';
 }
 
 export interface Relatorio {
@@ -46,7 +48,19 @@ export interface Relatorio {
   fotos: string[];
   os_2_0: boolean;
   os_4_0: boolean;
+  evidencia_fotos?: EvidenciaFoto[];
   created_at: string;
+}
+
+export interface EvidenciaFoto {
+  file_name: string;
+  file_hash: string;
+  captured_at: string;
+  capture_lat?: number;
+  capture_lng?: number;
+  uploaded_by?: string;
+  denuncia_id: string;
+  storage_path?: string;
 }
 
 export interface AutoInfracao {
