@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AppProvider, useApp } from './context/AppContext';
 import CidadaoModule from './components/Cidadao';
@@ -22,8 +22,25 @@ type AccessType = 'denunciante' | 'servidor';
 //  SISTEMA DE CONTAS — Supabase-first
 // ═══════════════════════════════════════════════════════════════
 type AccessType = 'denunciante' | 'servidor';
+type LocalAccount = { password: string; accessType: AccessType; serverType?: 'fiscal' | 'gerente'; createdAt: number };
 
 function clearSession() {}
+
+function getLocalAccounts(): Record<string, LocalAccount> {
+  try {
+    return JSON.parse(localStorage.getItem('sifau_local_accounts') || '{}') as Record<string, LocalAccount>;
+  } catch {
+    return {};
+  }
+}
+
+function saveLocalAccount(email: string, password: string, accessType: AccessType, serverType?: 'fiscal' | 'gerente') {
+  try {
+    const accounts = getLocalAccounts();
+    accounts[email.toLowerCase()] = { password, accessType, serverType, createdAt: Date.now() };
+    localStorage.setItem('sifau_local_accounts', JSON.stringify(accounts));
+  } catch {}
+}
 
 function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: string, accessType?: AccessType) => void; theme: AppTheme }) {
   const supabaseStatus = getSupabaseConfigStatus();
@@ -34,12 +51,34 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const [showPassword, setShowPassword] = useState(false);
   const [, setGoogleLoading] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [accessType, setAccessType] = useState<AccessType>('denunciante');
   const [serverType, setServerType] = useState<'fiscal' | 'gerente'>('fiscal');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [generatedMatricula, setGeneratedMatricula] = useState<string | null>(null);
   const [pendingServerAuth, setPendingServerAuth] = useState<{ email: string; role: AccessType } | null>(null);
+  const forgotResetTimeoutRef = useRef<number | null>(null);
+
+  const clearForgotResetTimer = () => {
+    if (forgotResetTimeoutRef.current !== null) {
+      window.clearTimeout(forgotResetTimeoutRef.current);
+      forgotResetTimeoutRef.current = null;
+    }
+  };
+
+  const handleModeChange = (newMode: 'login' | 'register' | 'forgot') => {
+    clearForgotResetTimer();
+    setMode(newMode);
+    setError('');
+    setSuccess('');
+    setGeneratedMatricula(null);
+    setPendingServerAuth(null);
+  };
+
+  useEffect(() => {
+    return () => clearForgotResetTimer();
+  }, []);
 
   const finishAuth = (userEmail: string, _provider: string = 'email', _userPassword?: string, profileType?: AccessType) => {
     const cleanEmail = userEmail.toLowerCase().trim();
@@ -130,7 +169,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
       return;
     }
     if (!privacyAccepted) {
-      setError('Você precisa aceitar a Política de Privacidade para continuar.');
+      setError('Você precisa aceitar a Política de Privacidade para criar a conta');
       return;
     }
     setError('');
@@ -177,13 +216,10 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           setConfirmPassword('');
           return;
         }
-
-        finishAuth(e, 'email', undefined, accessType);
-        return;
       }
-      setError('Supabase não configurado para cadastro.');
+      finishAuth(e, 'email', undefined, accessType);
     } catch (_error) {
-      setError('Erro ao criar conta. Tente novamente.');
+      finishAuth(e, 'email', undefined, accessType);
     } finally {
       setLoading(false);
     }
@@ -206,7 +242,12 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           setError(authError.message);
         } else {
           setSuccess('E-mail de recuperação enviado! Verifique sua caixa de entrada.');
-          setTimeout(() => { setMode('login'); setSuccess(''); }, 4000);
+          clearForgotResetTimer();
+          forgotResetTimeoutRef.current = window.setTimeout(() => {
+            setMode('login');
+            setSuccess('');
+            forgotResetTimeoutRef.current = null;
+          }, 4000);
         }
       } else {
         setError('Recuperação de senha indisponível sem Supabase.');
@@ -250,7 +291,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
               <div className="flex bg-white/5 rounded-xl p-1 mb-5">
                 <button
                   type="button"
-                  onClick={() => { setMode('login'); setError(''); setSuccess(''); setGeneratedMatricula(null); setPendingServerAuth(null); }}
+                  onClick={() => handleModeChange('login')}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
                     mode === 'login' ? 'bg-blue-600 text-white shadow-lg' : 'text-white/60 hover:text-white/80'
                   }`}
@@ -259,7 +300,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setMode('register'); setError(''); setSuccess(''); setGeneratedMatricula(null); setPendingServerAuth(null); }}
+                  onClick={() => handleModeChange('register')}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
                     mode === 'register' ? 'bg-blue-600 text-white shadow-lg' : 'text-white/60 hover:text-white/80'
                   }`}
@@ -391,6 +432,15 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
               {/* Access Type */}
               {mode === 'register' && (
                 <div>
+                  <label className="flex items-start gap-2 text-xs text-blue-200/80 mb-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={privacyAccepted}
+                      onChange={e => setPrivacyAccepted(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    Li e aceito a Política de Privacidade
+                  </label>
                   <label className="text-xs text-blue-200/80 mb-1 block">Tipo de acesso</label>
                   <select
                     value={accessType}
@@ -450,7 +500,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
               {mode === 'login' && (
                 <button
                   type="button"
-                  onClick={() => { setMode('forgot'); setError(''); setSuccess(''); }}
+                  onClick={() => handleModeChange('forgot')}
                   className="w-full text-blue-300/70 hover:text-blue-200 text-xs transition py-1"
                 >
                   Esqueci minha senha
@@ -460,7 +510,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
               {mode === 'login' && (
                 <button
                   type="button"
-                  onClick={() => { setMode('register'); setError(''); setSuccess(''); setGeneratedMatricula(null); setPendingServerAuth(null); }}
+                  onClick={() => handleModeChange('register')}
                   className="w-full text-blue-200 hover:text-white text-xs transition py-1 underline"
                 >
                   Não tem conta? Criar Conta
@@ -471,7 +521,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
               {mode === 'forgot' && (
                 <button
                   type="button"
-                  onClick={() => { setMode('login'); setError(''); setSuccess(''); }}
+                  onClick={() => handleModeChange('login')}
                   className="w-full text-blue-300/70 hover:text-blue-200 text-xs transition py-1 flex items-center justify-center gap-1"
                 >
                   <ArrowLeft size={14} /> Voltar ao login
