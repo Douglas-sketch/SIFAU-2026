@@ -682,11 +682,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const exists = prev.find(x => x.denuncia_id === r.denuncia_id);
       if (exists) {
         const updated = { ...exists, ...r };
-        if (isOnline) supa.upsertRelatorio(updated);
+        if (isOnline) {
+          supa.upsertRelatorio(updated);
+          if (updated.evidencia_fotos?.length && updated.fotos?.length) {
+            supa.syncFiscalEvidencePhotos(updated.denuncia_id, updated.fiscal_id, updated.evidencia_fotos, updated.fotos);
+          }
+        }
         return prev.map(x => x.denuncia_id === r.denuncia_id ? updated : x);
       }
       const newR = { ...r, id: `rel-${Date.now()}`, created_at: new Date().toISOString() };
-      if (isOnline) supa.upsertRelatorio(newR);
+      if (isOnline) {
+        supa.upsertRelatorio(newR);
+        if (newR.evidencia_fotos?.length && newR.fotos?.length) {
+          supa.syncFiscalEvidencePhotos(newR.denuncia_id, newR.fiscal_id, newR.evidencia_fotos, newR.fotos);
+        }
+      }
       return [...prev, newR];
     });
   }, [isOnline]);

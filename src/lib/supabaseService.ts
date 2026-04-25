@@ -1,5 +1,5 @@
 import { supabase, addLog } from './supabase';
-import { Profile, Denuncia, Relatorio, AutoInfracao, HistoricoAtividade, Mensagem } from '../types';
+import { Profile, Denuncia, Relatorio, AutoInfracao, HistoricoAtividade, Mensagem, EvidenciaFoto } from '../types';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -206,6 +206,8 @@ export async function createDenuncia(d: Denuncia): Promise<Denuncia | null> {
       sla_horas: (d.sla_dias || 3) * 24,
       pontos_provisorio: d.pontos_provisorio || 0,
       auth_email: d.auth_email || null,
+      ia_tipo_sugerido: d.ia_tipo_sugerido || null,
+      ia_urgencia_sugerida: d.ia_urgencia_sugerida || null,
     };
     addLog(`📝 Criando denúncia: ${d.protocolo} (email: ${d.auth_email || 'N/A'})`);
     const { data, error } = await supabase!.from('denuncias').insert(insertData).select().single();
@@ -276,10 +278,56 @@ export async function upsertRelatorio(r: Relatorio): Promise<void> {
       fiscal_id: r.fiscal_id,
       texto: r.texto,
       assinatura_base64: r.assinatura_base64,
-      dados_extras: { os_2_0: r.os_2_0, os_4_0: r.os_4_0, fotos: r.fotos || [] },
+      dados_extras: {
+        os_2_0: r.os_2_0,
+        os_4_0: r.os_4_0,
+        fotos: r.fotos || [],
+        evidencia_fotos: r.evidencia_fotos || [],
+      },
       created_at: r.created_at,
     });
   } catch { /* */ }
+}
+
+export async function syncFiscalEvidencePhotos(
+  denunciaId: string,
+  fiscalId: string,
+  evidencias: EvidenciaFoto[],
+  photosBase64: string[]
+): Promise<void> {
+  if (!ok() || !denunciaId || !fiscalId || !evidencias.length || !photosBase64.length) return;
+  try {
+    for (let i = 0; i < Math.min(evidencias.length, photosBase64.length); i++) {
+      const ev = evidencias[i];
+      const base64 = photosBase64[i];
+      const safeName = (ev.file_name || `evidencia-${i + 1}.jpg`).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = `${denunciaId}/${Date.now()}-${i}-${safeName}`;
+
+      try {
+        const raw = base64.includes(',') ? base64.split(',')[1] : base64;
+        const bin = Uint8Array.from(atob(raw), c => c.charCodeAt(0));
+        await supabase!.storage.from('evidencias').upload(path, bin, { contentType: 'image/jpeg', upsert: true });
+      } catch {
+        // storage opcional: não interromper fluxo existente
+      }
+
+      await supabase!.from('fotos').upsert({
+        id: `foto-evid-${denunciaId}-${ev.file_hash.slice(0, 12)}-${i}`,
+        denuncia_id: denunciaId,
+        base64,
+        tipo: 'relatorio',
+        file_name: ev.file_name || safeName,
+        file_hash: ev.file_hash,
+        captured_at: ev.captured_at,
+        capture_lat: ev.capture_lat ?? null,
+        capture_lng: ev.capture_lng ?? null,
+        uploaded_by: fiscalId,
+        storage_path: path,
+      });
+    }
+  } catch {
+    // silencioso por requisito
+  }
 }
 
 // ============================================
@@ -535,11 +583,7 @@ export async function registerUserAccount(
   email: string,
   provider: string = 'email',
   password?: string,
-  opts?: {
-    accessType?: 'denunciante' | 'servidor';
-    serverType?: 'fiscal' | 'gerente' | null;
-    lgpdConsentAt?: string;
-  }
+  opts?: { accessType?: 'denunciante' | 'servidor'; serverType?: 'fiscal' | 'gerente' | null }
 ): Promise<void> {
   // NÃO depende de ok() — tenta SEMPRE salvar no Supabase diretamente
   if (!supabase || !email || email === 'anonymous') {
@@ -620,43 +664,6 @@ export async function registerUserAccount(
     }
   } catch (e: any) {
     addLog(`❌ Exceção registrar conta: ${e?.message}`);
-  }
-}
-
-export async function requestLgpdAccountDeletion(email: string): Promise<{ ok: boolean; requestedAt?: string; error?: string }> {
-  if (!supabase || !email || email === 'anonymous') {
-    return { ok: false, error: 'E-mail inválido para exclusão.' };
-  }
-
-  const cleanEmail = email.trim().toLowerCase();
-  const requestedAt = new Date().toISOString();
-
-  try {
-    const { error: updateError } = await supabase
-      .from('app_users')
-      .update({ deletion_requested_at: requestedAt, updated_at: requestedAt })
-      .eq('email', cleanEmail);
-
-    if (updateError) {
-      return { ok: false, error: updateError.message };
-    }
-
-    const { error: invokeError } = await supabase.functions.invoke('notify-account-deletion-request', {
-      body: {
-        email: cleanEmail,
-        requestedAt,
-        source: 'sifau-cidadao-perfil',
-      },
-    });
-
-    if (invokeError) {
-      addLog(`⚠️ Edge Function de exclusão retornou erro para ${cleanEmail}: ${invokeError.message}`);
-      return { ok: false, requestedAt, error: `Solicitação registrada, mas falhou ao notificar admin: ${invokeError.message}` };
-    }
-
-    return { ok: true, requestedAt };
-  } catch (e: any) {
-    return { ok: false, requestedAt, error: e?.message || 'Erro ao solicitar exclusão.' };
   }
 }
 
@@ -903,6 +910,8 @@ function mapDenuncia(r: any): Denuncia {
     fotos: [],
     motivo_rejeicao: r.motivo_rejeicao,
     auth_email: r.auth_email || '',
+    ia_tipo_sugerido: r.ia_tipo_sugerido || undefined,
+    ia_urgencia_sugerida: r.ia_urgencia_sugerida || undefined,
   };
 }
 
@@ -917,6 +926,7 @@ function mapRelatorio(r: any): Relatorio {
     fotos: extras.fotos || [],
     os_2_0: extras.os_2_0 || false,
     os_4_0: extras.os_4_0 || false,
+    evidencia_fotos: extras.evidencia_fotos || [],
     created_at: r.created_at,
   };
 }

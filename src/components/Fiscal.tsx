@@ -1173,6 +1173,16 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
   const [os40, setOs40] = useState(existingRel?.os_4_0 ?? false);
   const [assinatura, setAssinatura] = useState<string>(existingRel?.assinatura_base64 || '');
   const [fotosRel, setFotosRel] = useState<string[]>(existingRel?.fotos || []);
+  const [evidenciaFotos, setEvidenciaFotos] = useState<{
+    file_name: string;
+    file_hash: string;
+    captured_at: string;
+    capture_lat?: number;
+    capture_lng?: number;
+    uploaded_by?: string;
+    denuncia_id: string;
+    storage_path?: string;
+  }[]>(existingRel?.evidencia_fotos || []);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const limites = TIPO_MULTA_VALORES[denuncia.tipo] || { min: 100, max: 5000 };
@@ -1237,6 +1247,20 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
     const files = e.target.files;
     if (!files) return;
     for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const bytes = await file.arrayBuffer();
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      const hashHex = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+      const capturedAt = new Date().toISOString();
+      const gps = await new Promise<{ lat?: number; lng?: number }>((resolve) => {
+        if (!navigator.geolocation) return resolve({});
+        navigator.geolocation.getCurrentPosition(
+          (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+          () => resolve({}),
+          { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+        );
+      });
+
       const reader = new FileReader();
       reader.onload = (ev) => {
         const img = new Image();
@@ -1247,10 +1271,22 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
           const ctx = canvas.getContext('2d')!;
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
           setFotosRel(prev => [...prev, canvas.toDataURL('image/jpeg', 0.4)]);
+          setEvidenciaFotos(prev => [
+            ...(prev || []),
+            {
+              file_name: file.name || `foto-${Date.now()}.jpg`,
+              file_hash: hashHex,
+              captured_at: capturedAt,
+              capture_lat: gps.lat,
+              capture_lng: gps.lng,
+              uploaded_by: currentUser?.id || '',
+              denuncia_id: denuncia.id,
+            },
+          ]);
         };
         img.src = ev.target?.result as string;
       };
-      reader.readAsDataURL(files[i]);
+      reader.readAsDataURL(file);
     }
   };
 
@@ -1263,6 +1299,7 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
       fotos: fotosRel,
       os_2_0: os20,
       os_4_0: os40,
+      evidencia_fotos: evidenciaFotos || [],
     });
     addNotification('Relatório salvo com sucesso!', 'success');
     setView('main');
@@ -1307,6 +1344,7 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
       fotos: fotosRel,
       os_2_0: os20,
       os_4_0: os40,
+      evidencia_fotos: evidenciaFotos || [],
     });
     updateDenunciaStatus(denuncia.id, 'aguardando_aprovacao');
     setShowSuccess(true);

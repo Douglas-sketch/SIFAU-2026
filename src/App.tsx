@@ -40,7 +40,6 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const [success, setSuccess] = useState('');
   const [generatedMatricula, setGeneratedMatricula] = useState<string | null>(null);
   const [pendingServerAuth, setPendingServerAuth] = useState<{ email: string; role: AccessType } | null>(null);
-  const [privacyAccepted, setPrivacyAccepted] = useState(false);
 
   const finishAuth = (userEmail: string, _provider: string = 'email', _userPassword?: string, profileType?: AccessType) => {
     const cleanEmail = userEmail.toLowerCase().trim();
@@ -99,7 +98,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
           return;
         }
 
-        setError('Não foi possível validar seu login agora. Tente novamente em instantes.');
+        setError('Não foi possível entrar agora. Tente novamente em instantes.');
         return;
       }
       setError('Supabase não configurado para autenticação.');
@@ -144,7 +143,6 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         await supa.registerUserAccount(e, 'email', p, {
           accessType,
           serverType: accessType === 'servidor' ? serverType : null,
-          lgpdConsentAt: new Date().toISOString(),
         });
         let serverMsg = '';
         let createdMatricula: string | null = null;
@@ -385,29 +383,6 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
                   </select>
                   <p className="text-[11px] text-blue-200/70 mt-1">
                     Denunciantes usam o módulo cidadão. Servidores também podem acessar área restrita com matrícula e senha.
-                  </p>
-                </div>
-              )}
-
-              {mode === 'register' && (
-                <div className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-2">
-                  <label className="flex items-start gap-2 text-xs text-blue-100 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={privacyAccepted}
-                      onChange={(e) => setPrivacyAccepted(e.target.checked)}
-                      className="mt-0.5"
-                    />
-                    <span>
-                      Li e aceito a{' '}
-                      <a href="/privacidade" className="underline text-blue-300 hover:text-blue-200" target="_blank" rel="noreferrer">
-                        Política de Privacidade
-                      </a>
-                      .
-                    </span>
-                  </label>
-                  <p className="text-[11px] text-blue-200/80">
-                    Seus dados são usados apenas para registro e acompanhamento de denúncias urbanas conforme a LGPD (Lei 13.709/2018).
                   </p>
                 </div>
               )}
