@@ -219,6 +219,8 @@ export async function getAllDenuncias(): Promise<Denuncia[]> {
 export async function createDenuncia(d: Denuncia): Promise<Denuncia | null> {
   if (!ok()) return null;
   try {
+    const authEmail = d.auth_email || (d as any).cidadao_email || '';
+    const cidadaoId = (d as any).cidadao_id || (authEmail ? `au-${authEmail.replace(/[^a-z0-9]/gi, '-')}` : null);
     const insertData: Record<string, any> = {
       id: d.id,
       protocolo: d.protocolo,
@@ -231,7 +233,7 @@ export async function createDenuncia(d: Denuncia): Promise<Denuncia | null> {
       prioridade: (d as any).prioridade || 'normal',
       canal_origem: 'app',
       anonima: d.denunciante_anonimo || false,
-      cidadao_id: (d as any).cidadao_id || null,
+      cidadao_id: cidadaoId,
       pontos_previsto: d.pontos_provisorio || (d as any).pontos_previsto || 0,
       prazo_limite: d.sla_dias
         ? new Date(Date.now() + d.sla_dias * 24 * 3600 * 1000).toISOString()
@@ -679,14 +681,6 @@ export async function userAccountExists(email: string): Promise<boolean> {
   if (!supabase || !email || email === 'anonymous') return false;
   try {
     const { data, error } = await supabase
-      .from('app_users')
-      .select('email')
-      .eq('email', email.toLowerCase())
-      .limit(1)
-      .maybeSingle();
-    if (!error && data) return true;
-
-    const { data: appUser, error: appErr } = await supabase
       .from('app_users')
       .select('email')
       .eq('email', email.toLowerCase())

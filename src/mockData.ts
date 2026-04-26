@@ -14,7 +14,6 @@ export const mockProfiles: Profile[] = [
     matricula: 'GER-001',
     status_online: 'offline',
     pontos_total: 0,
-    senha: 'marconi2026',
   },
   // ger-002 removido (João Lacerda)
 
@@ -28,7 +27,6 @@ export const mockProfiles: Profile[] = [
     lat: -8.0476,
     lng: -34.8770,
     pontos_total: 0,
-    senha: 'marie2026',
   },
   {
     id: 'fsc-002',
@@ -39,7 +37,6 @@ export const mockProfiles: Profile[] = [
     lat: -8.0530,
     lng: -34.8710,
     pontos_total: 0,
-    senha: 'balbino2026',
   },
   {
     id: 'fsc-003',
@@ -50,7 +47,6 @@ export const mockProfiles: Profile[] = [
     lat: -8.0610,
     lng: -34.8690,
     pontos_total: 0,
-    senha: 'demetrius2026',
   },
   {
     id: 'fsc-004',
@@ -61,7 +57,6 @@ export const mockProfiles: Profile[] = [
     lat: -8.0490,
     lng: -34.8800,
     pontos_total: 0,
-    senha: 'kamila2026',
   },
   {
     id: 'fsc-005',
@@ -72,7 +67,6 @@ export const mockProfiles: Profile[] = [
     lat: -8.0550,
     lng: -34.8750,
     pontos_total: 0,
-    senha: 'evanisio2026',
   },
   {
     id: 'fsc-006',
@@ -83,7 +77,6 @@ export const mockProfiles: Profile[] = [
     lat: -8.0580,
     lng: -34.8720,
     pontos_total: 0,
-    senha: 'iris2026',
   },
   {
     id: 'fsc-007',
@@ -94,7 +87,6 @@ export const mockProfiles: Profile[] = [
     lat: -8.0620,
     lng: -34.8680,
     pontos_total: 0,
-    senha: 'paulo2026',
   },
   {
     id: 'fsc-008',
@@ -105,7 +97,6 @@ export const mockProfiles: Profile[] = [
     lat: -8.0500,
     lng: -34.8790,
     pontos_total: 0,
-    senha: 'adriana2026',
   },
   {
     id: 'fsc-009',
@@ -116,7 +107,6 @@ export const mockProfiles: Profile[] = [
     lat: -8.0560,
     lng: -34.8730,
     pontos_total: 0,
-    senha: 'andre2026',
   },
   {
     id: 'fsc-010',
@@ -127,7 +117,6 @@ export const mockProfiles: Profile[] = [
     lat: -8.0540,
     lng: -34.8760,
     pontos_total: 0,
-    senha: 'rebeca2026',
   },
   {
     id: 'fsc-011',
@@ -138,7 +127,6 @@ export const mockProfiles: Profile[] = [
     lat: -8.0510,
     lng: -34.8740,
     pontos_total: 0,
-    senha: 'gissieri2026',
   },
   {
     id: 'fsc-012',
@@ -149,7 +137,6 @@ export const mockProfiles: Profile[] = [
     lat: -8.0525,
     lng: -34.8755,
     pontos_total: 0,
-    senha: 'edson2026',
   },
 ];
 

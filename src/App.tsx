@@ -57,7 +57,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [generatedMatricula, setGeneratedMatricula] = useState<string | null>(null);
-  const [pendingServerAuth, setPendingServerAuth] = useState<{ email: string; role: AccessType } | null>(null);
+  const [pendingServerAuth, setPendingServerAuth] = useState<{ email: string; role: AccessType | 'fiscal' | 'gerente' } | null>(null);
   const forgotResetTimeoutRef = useRef<number | null>(null);
 
   const clearForgotResetTimer = () => {
@@ -80,9 +80,16 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
     return () => clearForgotResetTimer();
   }, []);
 
-  const finishAuth = (userEmail: string, _provider: string = 'email', _userPassword?: string, profileType?: AccessType) => {
+  const finishAuth = (
+    userEmail: string,
+    _provider: string = 'email',
+    _userPassword?: string,
+    profileType?: AccessType | 'fiscal' | 'gerente'
+  ) => {
     const cleanEmail = userEmail.toLowerCase().trim();
-    const resolvedType = profileType || 'denunciante';
+    const resolvedType: AccessType = profileType === 'fiscal' || profileType === 'gerente'
+      ? 'servidor'
+      : (profileType || 'denunciante');
     console.log('✅ Auth completo:', cleanEmail);
     onAuthenticated(cleanEmail, resolvedType);
   };
@@ -210,7 +217,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
         }
         if (accessType === 'servidor' && createdMatricula) {
           setGeneratedMatricula(createdMatricula);
-          setPendingServerAuth({ email: e, role: accessType });
+          setPendingServerAuth({ email: e, role: serverType });
           setSuccess(`Conta de servidor criada com sucesso!${serverMsg}`);
           setPassword('');
           setConfirmPassword('');
