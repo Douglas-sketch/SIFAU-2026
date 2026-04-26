@@ -5,6 +5,7 @@ import { useApp } from '../context/AppContext';
 import { DenunciaTipo } from '../types';
 import { PhotoGallery } from './PhotoViewer';
 import { compressPhoto } from '../lib/photoCompressor';
+import { supabase } from '../lib/supabase';
 
 const statusLabels: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
   pendente: { label: 'Pendente', color: 'bg-yellow-100 text-yellow-800', icon: <Clock size={16} /> },
@@ -174,7 +175,12 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   const [gpsCoords, setGpsCoords] = useState<{lat: number; lng: number} | null>(null);
   const [transcript, setTranscript] = useState('');
   const [speechSupported, setSpeechSupported] = useState(false);
+  const [isMicPermissionGranted, setIsMicPermissionGranted] = useState<boolean | null>(null);
   const [permissionsRequested, setPermissionsRequested] = useState(false);
+  const [iaTipoSugerido, setIaTipoSugerido] = useState<DenunciaTipo | null>(null);
+  const [iaUrgenciaSugerida, setIaUrgenciaSugerida] = useState<'baixa' | 'media' | 'alta' | null>(null);
+  const [iaJustificativa, setIaJustificativa] = useState('');
+  const [isClassifyingDescricao, setIsClassifyingDescricao] = useState(false);
   const recognitionRef = useRef<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -327,6 +333,24 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
     } catch {
       // ignore
     }
+
+  }, []);
+
+  const ensureMicrophonePermission = useCallback(async () => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setIsMicPermissionGranted(false);
+        return false;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
+      setIsMicPermissionGranted(true);
+      return true;
+    } catch {
+      setIsMicPermissionGranted(false);
+      alert('Permissão de microfone negada. Ative o microfone para transcrever a descrição.');
+      return false;
+    }
   }, []);
 
   useEffect(() => {
@@ -378,9 +402,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 
     recognition.onerror = (event: any) => {
       console.error('Speech error:', event.error);
-      if (event.error === 'not-allowed') {
-        alert('Permissão de microfone negada. Ative o microfone nas configurações do navegador.');
-      }
+      if (event.error === 'not-allowed') ensureMicrophonePermission();
       setIsRecording(false);
     };
 
@@ -396,7 +418,13 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
     };
 
     recognition.start();
-  }, [isRecording]);
+  }, [isRecording, ensureMicrophonePermission]);
+
+  useEffect(() => {
+    return () => {
+      try { recognitionRef.current?.stop?.(); } catch { /* ignore */ }
+    };
+  }, []);
 
   // compressPhoto imported from lib/photoCompressor
 
@@ -423,9 +451,59 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
       denunciante_anonimo: anonimo,
       pontos_provisorio: 0,
       fotos,
+      ia_tipo_sugerido: iaTipoSugerido || undefined,
+      ia_urgencia_sugerida: iaUrgenciaSugerida || undefined,
     });
     localStorage.removeItem(draftKey);
     onSuccess(d.protocolo);
+  };
+
+  const handleAdvanceToStep3 = async () => {
+    if (!descricao.trim()) return;
+
+    // Classificação por IA: nunca bloquear o fluxo e timeout máximo de 5s
+    setIsClassifyingDescricao(true);
+    try {
+      if (supabase) {
+        const timeoutPromise = new Promise<null>((resolve) => {
+          setTimeout(() => resolve(null), 5000);
+        });
+
+        const classifyPromise = supabase.functions
+          .invoke('classify-denuncia', {
+            body: {
+              descricao: descricao.trim(),
+              tipos_disponiveis: TIPOS,
+            },
+          })
+          .then(({ data, error }) => {
+            if (error || !data) return null;
+            return data as {
+              tipo_sugerido?: string;
+              urgencia?: 'baixa' | 'media' | 'alta';
+              justificativa?: string;
+            };
+          })
+          .catch(() => null);
+
+        const result = await Promise.race([classifyPromise, timeoutPromise]);
+        if (result?.tipo_sugerido && TIPOS.includes(result.tipo_sugerido as DenunciaTipo)) {
+          setTipo(result.tipo_sugerido as DenunciaTipo);
+          setIaTipoSugerido(result.tipo_sugerido as DenunciaTipo);
+          setIaUrgenciaSugerida(
+            result.urgencia === 'baixa' || result.urgencia === 'media' || result.urgencia === 'alta'
+              ? result.urgencia
+              : null
+          );
+          setIaJustificativa(result.justificativa || '');
+        }
+      }
+    } catch {
+      // Silencioso por requisito
+    } finally {
+      setIsClassifyingDescricao(false);
+      setStep(3);
+    }
   };
 
   return (
@@ -519,9 +597,24 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm md:text-base font-medium text-gray-700 mb-1 block">Tipo da Denúncia</label>
+                  <div className="flex items-center gap-2 mb-1">
+                    {iaTipoSugerido && (
+                      <span className="inline-flex items-center rounded-full bg-purple-100 text-purple-700 px-2 py-0.5 text-[11px] font-semibold">
+                        Sugerido pela IA
+                      </span>
+                    )}
+                    {iaUrgenciaSugerida && (
+                      <span className="inline-flex items-center rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[11px] font-semibold">
+                        Urgência: {iaUrgenciaSugerida}
+                      </span>
+                    )}
+                  </div>
                   <select value={tipo} onChange={e => setTipo(e.target.value as DenunciaTipo)} className="w-full border rounded-xl px-4 py-3 md:py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white md:text-lg">
                     {TIPOS.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
+                  {iaJustificativa && (
+                    <p className="text-xs text-purple-700 mt-1">Por que? {iaJustificativa}</p>
+                  )}
                 </div>
                 <div>
                   <label className="text-sm md:text-base font-medium text-gray-700 mb-1 block">Endereço / Local</label>
@@ -605,6 +698,18 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 
                 <div className="mt-2 flex items-center gap-2">
                   <button
+                    onClick={ensureMicrophonePermission}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition ${
+                      isMicPermissionGranted === true
+                        ? 'bg-green-50 text-green-700 border border-green-200'
+                        : 'bg-white text-blue-700 border border-blue-200 hover:bg-blue-50'
+                    }`}
+                  >
+                    <Mic size={16} />
+                    {isMicPermissionGranted === true ? '✅ Microfone ativo' : 'Ativar microfone'}
+                  </button>
+
+                  <button
                     onClick={handleRecording}
                     className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition ${
                       isRecording 
@@ -647,11 +752,11 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
               <div className="flex gap-3">
                 <button onClick={() => setStep(1)} className="flex-1 border border-gray-300 rounded-xl py-3 md:py-4 font-semibold md:text-lg">Voltar</button>
                 <button
-                  onClick={() => setStep(3)}
-                  disabled={!descricao.trim()}
+                  onClick={handleAdvanceToStep3}
+                  disabled={!descricao.trim() || isClassifyingDescricao}
                   className="flex-1 bg-blue-600 text-white rounded-xl py-3 md:py-4 font-semibold disabled:opacity-50 flex items-center justify-center gap-2 md:text-lg"
                 >
-                  Próximo <ChevronRight size={18} />
+                  {isClassifyingDescricao ? 'Analisando descrição...' : <>Próximo <ChevronRight size={18} /></>}
                 </button>
               </div>
             </motion.div>
