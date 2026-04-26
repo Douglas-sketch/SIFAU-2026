@@ -684,8 +684,17 @@ export async function userAccountExists(email: string): Promise<boolean> {
       .eq('email', email.toLowerCase())
       .limit(1)
       .maybeSingle();
-    if (error) return false;
-    return !!data;
+    if (!error && data) return true;
+
+    const { data: appUser, error: appErr } = await supabase
+      .from('app_users')
+      .select('email')
+      .eq('email', email.toLowerCase())
+      .limit(1)
+      .maybeSingle();
+
+    if (appErr) return false;
+    return !!appUser;
   } catch {
     return false;
   }
