@@ -80,7 +80,7 @@ export async function checkConnection(): Promise<boolean> {
 }
 
 function ok() {
-  return supabase && supabaseReady;
+  return !!supabase;
 }
 
 // ============================================
