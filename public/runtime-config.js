@@ -1,0 +1,3 @@
+// Runtime config carregado antes do app (sem necessidade de rebuild)
+window.__SIFAU_SUPABASE_URL = 'https://zluvmbbpteqhjbvqlrrv.supabase.co';
+window.__SIFAU_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpsdXZtYmJwdGVxaGpidnFscnJ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxNjA4NjIsImV4cCI6MjA5MjczNjg2Mn0.d28J3f0JeJ37_jELZ5Kd57oPC64Log6jB9HoyzSRn3o';
