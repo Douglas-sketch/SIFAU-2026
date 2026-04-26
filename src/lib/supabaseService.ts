@@ -100,21 +100,23 @@ export async function loginUser(matricula: string, senha: string): Promise<Profi
       return null;
     }
 
-    const email = (appUser.email || '').toLowerCase();
-    const { data: account, error: accountError } = await supabase!
-      .from('user_accounts')
-      .select('senha')
-      .eq('email', email)
-      .maybeSingle();
-
-    if (accountError || !account || (account.senha || '') !== senha) {
+    const localRaw = localStorage.getItem('sifau_local_accounts') || '{}';
+    const localAccounts = JSON.parse(localRaw) as Record<string, { password?: string }>;
+    const account = localAccounts[(appUser.email || '').toLowerCase()];
+    if (!account || (account.password || '') !== senha) {
       addLog(`⚠️ Login Supabase falhou (senha): ${matricula}`);
       return null;
     }
 
+    const { data: profileData } = await supabase!
+      .from('profiles')
+      .select('*')
+      .eq('id', appUser.id)
+      .maybeSingle();
+
     await supabase!.from('profiles').update({ updated_at: new Date().toISOString() }).eq('id', appUser.id);
     addLog(`✅ Login Supabase OK: ${appUser.nome}`);
-    return mapProfile({ id: appUser.id, nome: appUser.nome, tipo: appUser.tipo_acesso, matricula: appUser.matricula, pontos: 0, status: 'online' });
+    return mapProfile({ ...(profileData || {}), ...appUser, ativo: true });
   } catch (e: any) {
     addLog(`❌ Erro login: ${e?.message}`);
     return null;
@@ -124,29 +126,34 @@ export async function loginUser(matricula: string, senha: string): Promise<Profi
 export async function logoutUser(userId: string): Promise<void> {
   if (!ok()) return;
   try {
-    await supabase!.from('profiles').update({ status: 'offline' }).eq('id', userId);
+    await supabase!.from('profiles').update({ updated_at: new Date().toISOString() }).eq('id', userId);
   } catch { /* */ }
 }
 
 export async function getAllProfiles(): Promise<Profile[]> {
   if (!ok()) return [];
   try {
-    const { data } = await supabase!.from('profiles').select('*').order('nome');
-    return (data || []).map(mapProfile);
+    const [{ data: users }, { data: profiles }] = await Promise.all([
+      supabase!.from('app_users').select('*').order('nome'),
+      supabase!.from('profiles').select('*'),
+    ]);
+    const profilesMap = new Map((profiles || []).map((p: any) => [p.id, p]));
+    return (users || []).map((u: any) => mapProfile({ ...profilesMap.get(u.id), ...u }));
   } catch { return []; }
 }
 
 export async function updateProfileStatus(userId: string, status: string): Promise<void> {
   if (!ok()) return;
   try {
-    await supabase!.from('profiles').update({ status }).eq('id', userId);
+    await supabase!.from('profiles').update({ updated_at: new Date().toISOString() }).eq('id', userId);
+    await supabase!.from('app_users').update({ ativo: status !== 'offline' }).eq('id', userId);
   } catch { /* */ }
 }
 
 export async function updateProfilePontos(userId: string, pontos: number): Promise<void> {
   if (!ok()) return;
   try {
-    await supabase!.from('profiles').update({ pontos }).eq('id', userId);
+    await supabase!.from('profiles').update({ pontuacao_total: pontos, updated_at: new Date().toISOString() }).eq('id', userId);
   } catch { /* */ }
 }
 
@@ -154,12 +161,12 @@ export async function updateProfilePontos(userId: string, pontos: number): Promi
 export async function getProfileById(profileId: string): Promise<Profile | null> {
   if (!ok()) return null;
   try {
-    const { data } = await supabase!
-      .from('profiles')
-      .select('*')
-      .eq('id', profileId)
-      .maybeSingle();
-    return data ? mapProfile(data) : null;
+    const [{ data: user }, { data: profile }] = await Promise.all([
+      supabase!.from('app_users').select('*').eq('id', profileId).maybeSingle(),
+      supabase!.from('profiles').select('*').eq('id', profileId).maybeSingle(),
+    ]);
+    if (!user && !profile) return null;
+    return mapProfile({ ...(profile || {}), ...(user || {}) });
   } catch { return null; }
 }
 
@@ -170,9 +177,12 @@ export async function upsertProfile(profile: Profile): Promise<void> {
       id: profile.id,
       user_id: profile.id,
       pontuacao_total: profile.pontos_total || 0,
-      pontuacao_mes: 0,
+      pontuacao_mes: (profile as any).pontos_mes || 0,
+      total_os_concluidas: (profile as any).os_concluidas || 0,
+      total_os_devolvidas: (profile as any).os_devolvidas || 0,
+      badge_nivel: 'iniciante',
       secretaria: (profile as any).secretaria || null,
-      zona_atuacao: (profile as any).zona_atuacao || null,
+      zona_atuacao: (profile as any).zona || (profile as any).zona_atuacao || null,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'id' });
 
@@ -212,23 +222,22 @@ export async function createDenuncia(d: Denuncia): Promise<Denuncia | null> {
     const insertData: Record<string, any> = {
       id: d.id,
       protocolo: d.protocolo,
-      descricao: appendMatriculaToDescricao(d.descricao || '', d.denunciante_matricula),
+      descricao: d.descricao || '',
       endereco: d.endereco || '',
       bairro: (d as any).bairro || null,
       latitude: d.lat || null,
       longitude: d.lng || null,
       status: d.status || 'pendente',
       prioridade: (d as any).prioridade || 'normal',
-      anonima: d.denunciante_anonimo || false,
       canal_origem: 'app',
+      anonima: d.denunciante_anonimo || false,
       cidadao_id: (d as any).cidadao_id || null,
-      pontos_previsto: d.pontos_provisorio || 0,
+      pontos_previsto: d.pontos_provisorio || (d as any).pontos_previsto || 0,
       prazo_limite: d.sla_dias
         ? new Date(Date.now() + d.sla_dias * 24 * 3600 * 1000).toISOString()
         : null,
       ia_tipo_sugerido: d.ia_tipo_sugerido || null,
       ia_urgencia_sugerida: d.ia_urgencia_sugerida || null,
-      tipo_infracao_id: null,
     };
     addLog(`📝 Criando denúncia: ${d.protocolo} (email: ${d.auth_email || 'N/A'})`);
     const { data, error } = await supabase!.from('denuncias').insert(insertData).select().single();
@@ -604,7 +613,12 @@ export async function registerUserAccount(
   email: string,
   provider: string = 'email',
   password?: string,
-  opts?: { accessType?: 'denunciante' | 'servidor'; serverType?: 'fiscal' | 'gerente' | null }
+  opts?: {
+    accessType?: 'denunciante' | 'servidor';
+    serverType?: 'fiscal' | 'gerente' | null;
+    nome?: string;
+    matricula?: string | null;
+  }
 ): Promise<void> {
   // NÃO depende de ok() — tenta SEMPRE salvar no Supabase diretamente
   if (!supabase || !email || email === 'anonymous') {
@@ -613,75 +627,27 @@ export async function registerUserAccount(
   }
   try {
     addLog(`📧 Registrando conta no Supabase: ${email}...`);
-    
-    // Tentar upsert direto
-    const payload: Record<string, any> = {
-      id: `ua-${email.replace(/[^a-z0-9]/gi, '-')}`,
+
+    const appUserId = `au-${email.replace(/[^a-z0-9]/gi, '-')}`;
+
+    await supabase.from('app_users').upsert({
+      id: appUserId,
       email: email.toLowerCase(),
-      provider,
+      nome: opts?.nome || email.split('@')[0],
+      tipo_acesso: opts?.accessType === 'servidor' ? (opts.serverType || 'fiscal') : 'cidadao',
+      matricula: opts?.matricula || null,
+      ativo: true,
       ultimo_acesso_at: new Date().toISOString(),
-      dispositivo: navigator.userAgent.substring(0, 100),
-    };
-    if (opts?.accessType) payload.access_type = opts.accessType;
-    if (opts?.serverType !== undefined) payload.server_type = opts.serverType;
+    }, { onConflict: 'email' });
 
-    const { error } = await supabase
-      .from('user_accounts')
-      .upsert(payload, { onConflict: 'email' });
+    await supabase.from('user_accounts').upsert({
+      id: `ua-${email.replace(/[^a-z0-9]/gi, '-')}`,
+      user_id: appUserId,
+      provider: provider || 'email',
+      provider_id: email.toLowerCase(),
+    }, { onConflict: 'id' });
 
-    if (error) {
-      addLog(`⚠️ Upsert falhou: ${error.message}, tentando insert...`);
-      // Fallback: tentar insert simples
-      const insertPayload: Record<string, any> = {
-        id: `ua-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-        email: email.toLowerCase(),
-        provider,
-        dispositivo: navigator.userAgent.substring(0, 100),
-      };
-      if (opts?.accessType) insertPayload.access_type = opts.accessType;
-      if (opts?.serverType !== undefined) insertPayload.server_type = opts.serverType;
-
-      const { error: insertError } = await supabase
-        .from('user_accounts')
-        .insert(insertPayload);
-      if (insertError) {
-        // Pode ser duplicata - tentar update
-        if (insertError.message.includes('duplicate') || insertError.code === '23505') {
-          const updatePayload: Record<string, any> = {
-            ultimo_acesso_at: new Date().toISOString(),
-            dispositivo: navigator.userAgent.substring(0, 100),
-          };
-          if (opts?.accessType) updatePayload.access_type = opts.accessType;
-          if (opts?.serverType !== undefined) updatePayload.server_type = opts.serverType;
-
-          await supabase
-            .from('user_accounts')
-            .update(updatePayload)
-            .eq('email', email.toLowerCase());
-          addLog(`✅ Conta atualizada: ${email}`);
-        } else {
-          addLog(`❌ Erro insert conta: ${insertError.message}`);
-        }
-      } else {
-        addLog(`✅ Conta inserida: ${email}`);
-      }
-    } else {
-      addLog(`✅ Conta registrada (upsert): ${email}`);
-    }
-
-    if (provider === 'email' && password) {
-      await supabase
-        .from('app_users')
-        .upsert({
-          id: `au-${email.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60),
-          email: email.toLowerCase(),
-          nome: email.split('@')[0],
-          tipo_acesso: opts?.accessType === 'servidor' ? (opts.serverType || 'fiscal') : 'cidadao',
-          matricula: null,
-          ativo: true,
-          senha_legacy: password,
-        }, { onConflict: 'email' });
-    }
+    addLog(`✅ Conta registrada (upsert): ${email}`);
   } catch (e: any) {
     addLog(`❌ Exceção registrar conta: ${e?.message}`);
   }
@@ -691,38 +657,17 @@ export async function getAccountAccessByEmail(email: string): Promise<{ accessTy
   if (!supabase || !email) return { accessType: 'denunciante', serverType: null };
   const cleanEmail = email.trim().toLowerCase();
   try {
-    const { data: ua } = await supabase
-      .from('user_accounts')
-      .select('access_type, server_type')
-      .eq('email', cleanEmail)
-      .limit(1)
-      .maybeSingle();
-
-    if (ua?.access_type === 'servidor') {
-      return { accessType: 'servidor', serverType: (ua.server_type as 'fiscal' | 'gerente' | null) || null };
-    }
-
     const { data: appUser } = await supabase
       .from('app_users')
-      .select('access_type, server_type')
+      .select('tipo_acesso')
       .eq('email', cleanEmail)
       .limit(1)
       .maybeSingle();
 
-    if (appUser?.access_type === 'servidor') {
-      return { accessType: 'servidor', serverType: (appUser.server_type as 'fiscal' | 'gerente' | null) || null };
+    const tipoAcesso = appUser?.tipo_acesso;
+    if (tipoAcesso === 'fiscal' || tipoAcesso === 'gerente') {
+      return { accessType: 'servidor', serverType: tipoAcesso };
     }
-
-    const fiscalId = `fsc-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
-    const gerenteId = `ger-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('tipo')
-      .in('id', [fiscalId, gerenteId])
-      .limit(1);
-
-    const serverTipo = (prof || []).find((p: any) => p?.tipo === 'fiscal' || p?.tipo === 'gerente')?.tipo;
-    if (serverTipo) return { accessType: 'servidor', serverType: serverTipo };
 
     return { accessType: 'denunciante', serverType: null };
   } catch {
@@ -734,7 +679,7 @@ export async function userAccountExists(email: string): Promise<boolean> {
   if (!supabase || !email || email === 'anonymous') return false;
   try {
     const { data, error } = await supabase
-      .from('user_accounts')
+      .from('app_users')
       .select('email')
       .eq('email', email.toLowerCase())
       .limit(1)
@@ -759,29 +704,13 @@ export async function checkUserAccountCredentials(
   email: string,
   password: string
 ): Promise<'ok' | 'wrong_password' | 'not_found'> {
-  if (!supabase || !email || email === 'anonymous') return 'not_found';
+  if (!email || email === 'anonymous') return 'not_found';
   try {
-    const { data, error } = await supabase
-      .from('user_accounts')
-      .select('email, senha')
-      .eq('email', email.toLowerCase())
-      .limit(1)
-      .maybeSingle();
-
-    if (!error && data) {
-      if ((data.senha || '') !== password) return 'wrong_password';
-      return 'ok';
-    }
-
-    const { data: appData, error: appError } = await supabase
-      .from('app_users')
-      .select('email, senha_legacy')
-      .eq('email', email.toLowerCase())
-      .limit(1)
-      .maybeSingle();
-
-    if (appError || !appData) return 'not_found';
-    if ((appData.senha_legacy || '') !== password) return 'wrong_password';
+    const localRaw = localStorage.getItem('sifau_local_accounts') || '{}';
+    const localAccounts = JSON.parse(localRaw) as Record<string, { password?: string }>;
+    const account = localAccounts[email.toLowerCase()];
+    if (!account) return 'not_found';
+    if ((account.password || '') !== password) return 'wrong_password';
     return 'ok';
   } catch {
     return 'not_found';
@@ -796,24 +725,23 @@ export async function ensureServerAccessByEmail(
   if (!supabase || !email || !password) return null;
   try {
     const cleanEmail = email.trim().toLowerCase();
-    const cleanSenha = password.trim();
     const prefix = tipo === 'gerente' ? 'GER' : 'FSC';
     const profileId = `${prefix.toLowerCase()}-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
     const nome = cleanEmail.split('@')[0] || (tipo === 'gerente' ? 'Gerente' : 'Fiscal');
 
     const { data: existing } = await supabase
-      .from('profiles')
+      .from('app_users')
       .select('id, matricula')
       .eq('id', profileId)
       .maybeSingle();
 
     if (existing?.matricula) {
-      await supabase.from('profiles').update({ senha: cleanSenha, tipo }).eq('id', profileId);
+      await supabase.from('app_users').update({ tipo_acesso: tipo, ativo: true, ultimo_acesso_at: new Date().toISOString() }).eq('id', profileId);
       return { matricula: existing.matricula, profileId };
     }
 
     const { data: rows } = await supabase
-      .from('profiles')
+      .from('app_users')
       .select('matricula')
       .ilike('matricula', `${prefix}-%`);
 
@@ -824,22 +752,34 @@ export async function ensureServerAccessByEmail(
     }, 0);
 
     const matricula = `${prefix}-${String(maxCode + 1).padStart(3, '0')}`;
-    const payload = {
+    const profilePayload = {
       id: profileId,
-      nome,
-      tipo,
-      matricula,
-      senha: cleanSenha,
-      status: 'offline',
-      pontos: 0,
+      user_id: profileId,
+      pontuacao_total: 0,
+      pontuacao_mes: 0,
+      total_os_concluidas: 0,
+      total_os_devolvidas: 0,
+      badge_nivel: 'iniciante',
+      secretaria: null,
+      zona_atuacao: null,
       updated_at: new Date().toISOString(),
     };
 
-    const { error } = await supabase.from('profiles').upsert(payload);
+    const { error } = await supabase.from('profiles').upsert(profilePayload, { onConflict: 'id' });
     if (error) {
       addLog(`❌ ensureServerAccessByEmail: ${error.message}`);
       return null;
     }
+
+    await supabase.from('app_users').upsert({
+      id: profileId,
+      email: cleanEmail,
+      nome,
+      tipo_acesso: tipo,
+      matricula,
+      ativo: true,
+      ultimo_acesso_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
 
     addLog(`✅ Acesso servidor criado para ${cleanEmail}: ${matricula}`);
     return { matricula, profileId };
@@ -896,14 +836,14 @@ export async function listRegisteredAccounts(): Promise<Array<{
 function mapProfile(r: any): Profile {
   return {
     id: r.id,
-    nome: r.nome,
-    tipo: r.tipo,
+    nome: r.nome || '',
+    tipo: (r.tipo_acesso === 'fiscal' || r.tipo_acesso === 'gerente' || r.tipo_acesso === 'cidadao') ? r.tipo_acesso : 'cidadao',
     matricula: r.matricula,
-    senha: r.senha,
-    status_online: r.status || 'offline',
-    pontos_total: r.pontos || 0,
-    lat: r.latitude,
-    lng: r.longitude,
+    senha: '',
+    status_online: r.ativo ? 'online' : 'offline',
+    pontos_total: r.pontuacao_total || r.pontos || 0,
+    lat: undefined,
+    lng: undefined,
   };
 }
 
