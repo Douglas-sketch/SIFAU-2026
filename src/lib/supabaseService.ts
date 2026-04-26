@@ -1,5 +1,5 @@
 import { supabase, addLog } from './supabase';
-import { Profile, Denuncia, Relatorio, AutoInfracao, HistoricoAtividade, Mensagem } from '../types';
+import { Profile, Denuncia, Relatorio, AutoInfracao, HistoricoAtividade, Mensagem, EvidenciaFoto } from '../types';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -35,38 +35,43 @@ export async function checkConnection(): Promise<boolean> {
 
   try {
     addLog('🔍 Testando conexão...');
-    
-    // Step 1: Simple fetch test to see if the URL is reachable
-    const { data, error } = await supabase
+
+    // Preferir user_accounts (contas de e-mail), com fallback para profiles.
+    const { data: uaData, error: uaError } = await supabase
+      .from('user_accounts')
+      .select('id, email')
+      .limit(1);
+
+    if (!uaError) {
+      addLog(`✅ Supabase OK via user_accounts (${uaData?.length || 0} registro(s) lido(s)).`);
+      supabaseReady = true;
+      return true;
+    }
+
+    const { data: pfData, error: pfError } = await supabase
       .from('profiles')
       .select('id, nome')
       .limit(1);
 
-    if (error) {
-      addLog(`❌ Erro: ${error.message}`);
-      if (error.code === '42P01' || error.message.includes('relation')) {
-        addLog('⚠️ TABELAS NÃO EXISTEM! Execute o SQL no Supabase.');
-      }
-      if (error.message.includes('FetchError') || error.message.includes('fetch')) {
-        addLog('⚠️ Servidor não acessível. Verifique a URL.');
-      }
-      if (error.message.includes('JWT') || error.message.includes('apikey')) {
-        addLog('⚠️ Chave API inválida.');
-      }
-      supabaseReady = false;
-      return false;
+    if (!pfError) {
+      addLog(`✅ Supabase OK via profiles (${pfData?.length || 0} registro(s) lido(s)).`);
+      supabaseReady = true;
+      return true;
     }
 
-    if (!data || data.length === 0) {
-      addLog('⚠️ Conexão OK mas tabela profiles está VAZIA');
-      addLog('⚠️ Execute o SQL com os INSERTs dos usuários');
-      supabaseReady = false;
-      return false;
+    const error = pfError || uaError;
+    addLog(`❌ Erro: ${error?.message || 'Falha desconhecida'}`);
+    if (error?.code === '42P01' || (error?.message || '').includes('relation')) {
+      addLog('⚠️ Tabelas esperadas não encontradas (profiles/user_accounts). Verifique o schema no projeto atual.');
     }
-
-    addLog(`✅ Supabase OK! ${data.length} profile(s) encontrado(s): ${data[0]?.nome}`);
-    supabaseReady = true;
-    return true;
+    if ((error?.message || '').includes('FetchError') || (error?.message || '').includes('fetch')) {
+      addLog('⚠️ Servidor não acessível. Verifique URL/projeto/rede.');
+    }
+    if ((error?.message || '').includes('JWT') || (error?.message || '').includes('apikey')) {
+      addLog('⚠️ Chave API inválida ou sem permissão.');
+    }
+    supabaseReady = false;
+    return false;
   } catch (e: any) {
     addLog(`❌ Exceção: ${e?.message || String(e)}`);
     supabaseReady = false;
@@ -75,7 +80,7 @@ export async function checkConnection(): Promise<boolean> {
 }
 
 function ok() {
-  return supabase && supabaseReady;
+  return !!supabase;
 }
 
 // ============================================
@@ -84,21 +89,32 @@ function ok() {
 export async function loginUser(matricula: string, senha: string): Promise<Profile | null> {
   if (!ok()) return null;
   try {
-    const { data, error } = await supabase!
-      .from('profiles')
+    const { data: appUser, error } = await supabase!
+      .from('app_users')
       .select('*')
       .ilike('matricula', matricula)
-      .eq('senha', senha)
       .single();
 
-    if (error || !data) {
+    if (error || !appUser) {
       addLog(`⚠️ Login Supabase falhou: ${matricula}`);
       return null;
     }
 
-    await supabase!.from('profiles').update({ status: 'online' }).eq('id', data.id);
-    addLog(`✅ Login Supabase OK: ${data.nome}`);
-    return mapProfile(data);
+    const email = (appUser.email || '').toLowerCase();
+    const { data: account, error: accountError } = await supabase!
+      .from('user_accounts')
+      .select('senha')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (accountError || !account || (account.senha || '') !== senha) {
+      addLog(`⚠️ Login Supabase falhou (senha): ${matricula}`);
+      return null;
+    }
+
+    await supabase!.from('profiles').update({ updated_at: new Date().toISOString() }).eq('id', appUser.id);
+    addLog(`✅ Login Supabase OK: ${appUser.nome}`);
+    return mapProfile({ id: appUser.id, nome: appUser.nome, tipo: appUser.tipo_acesso, matricula: appUser.matricula, pontos: 0, status: 'online' });
   } catch (e: any) {
     addLog(`❌ Erro login: ${e?.message}`);
     return null;
@@ -152,16 +168,22 @@ export async function upsertProfile(profile: Profile): Promise<void> {
   try {
     await supabase!.from('profiles').upsert({
       id: profile.id,
-      nome: profile.nome,
-      tipo: profile.tipo,
-      matricula: profile.matricula,
-      senha: profile.senha,
-      status: profile.status_online,
-      pontos: profile.pontos_total,
-      latitude: profile.lat || null,
-      longitude: profile.lng || null,
+      user_id: profile.id,
+      pontuacao_total: profile.pontos_total || 0,
+      pontuacao_mes: 0,
+      secretaria: (profile as any).secretaria || null,
+      zona_atuacao: (profile as any).zona_atuacao || null,
       updated_at: new Date().toISOString(),
-    });
+    }, { onConflict: 'id' });
+
+    await supabase!.from('app_users').upsert({
+      id: profile.id,
+      email: (profile as any).email || profile.id,
+      nome: profile.nome,
+      tipo_acesso: profile.tipo === 'fiscal' ? 'fiscal' : profile.tipo === 'gerente' ? 'gerente' : 'cidadao',
+      matricula: profile.matricula || null,
+      ativo: true,
+    }, { onConflict: 'id' });
   } catch { /* */ }
 }
 
@@ -190,17 +212,23 @@ export async function createDenuncia(d: Denuncia): Promise<Denuncia | null> {
     const insertData: Record<string, any> = {
       id: d.id,
       protocolo: d.protocolo,
-      tipo: d.tipo,
       descricao: appendMatriculaToDescricao(d.descricao || '', d.denunciante_matricula),
       endereco: d.endereco || '',
-      latitude: d.lat || 0,
-      longitude: d.lng || 0,
+      bairro: (d as any).bairro || null,
+      latitude: d.lat || null,
+      longitude: d.lng || null,
       status: d.status || 'pendente',
-      denunciante_nome: d.denunciante_nome || null,
-      denunciante_anonimo: d.denunciante_anonimo || false,
-      sla_horas: (d.sla_dias || 3) * 24,
-      pontos_provisorio: d.pontos_provisorio || 0,
-      auth_email: d.auth_email || null,
+      prioridade: (d as any).prioridade || 'normal',
+      anonima: d.denunciante_anonimo || false,
+      canal_origem: 'app',
+      cidadao_id: (d as any).cidadao_id || null,
+      pontos_previsto: d.pontos_provisorio || 0,
+      prazo_limite: d.sla_dias
+        ? new Date(Date.now() + d.sla_dias * 24 * 3600 * 1000).toISOString()
+        : null,
+      ia_tipo_sugerido: d.ia_tipo_sugerido || null,
+      ia_urgencia_sugerida: d.ia_urgencia_sugerida || null,
+      tipo_infracao_id: null,
     };
     addLog(`📝 Criando denúncia: ${d.protocolo} (email: ${d.auth_email || 'N/A'})`);
     const { data, error } = await supabase!.from('denuncias').insert(insertData).select().single();
@@ -222,12 +250,18 @@ export async function createDenuncia(d: Denuncia): Promise<Denuncia | null> {
   } catch (e: any) { addLog(`❌ Exceção criar denúncia: ${e?.message}`); return null; }
 }
 
-export async function updateDenuncia(id: string, updates: Partial<Record<string, any>>): Promise<void> {
-  if (!ok()) return;
+export async function updateDenuncia(id: string, updates: Partial<Record<string, any>>): Promise<boolean> {
+  if (!ok()) return false;
   try {
     const { error } = await supabase!.from('denuncias').update(updates).eq('id', id);
-    if (error) addLog(`❌ Erro update denúncia: ${error.message}`);
-  } catch { /* */ }
+    if (error) {
+      addLog(`❌ Erro update denúncia: ${error.message}`);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ============================================
@@ -265,10 +299,56 @@ export async function upsertRelatorio(r: Relatorio): Promise<void> {
       fiscal_id: r.fiscal_id,
       texto: r.texto,
       assinatura_base64: r.assinatura_base64,
-      dados_extras: { os_2_0: r.os_2_0, os_4_0: r.os_4_0, fotos: r.fotos || [] },
+      dados_extras: {
+        os_2_0: r.os_2_0,
+        os_4_0: r.os_4_0,
+        fotos: r.fotos || [],
+        evidencia_fotos: r.evidencia_fotos || [],
+      },
       created_at: r.created_at,
     });
   } catch { /* */ }
+}
+
+export async function syncFiscalEvidencePhotos(
+  denunciaId: string,
+  fiscalId: string,
+  evidencias: EvidenciaFoto[],
+  photosBase64: string[]
+): Promise<void> {
+  if (!ok() || !denunciaId || !fiscalId || !evidencias.length || !photosBase64.length) return;
+  try {
+    for (let i = 0; i < Math.min(evidencias.length, photosBase64.length); i++) {
+      const ev = evidencias[i];
+      const base64 = photosBase64[i];
+      const safeName = (ev.file_name || `evidencia-${i + 1}.jpg`).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = `${denunciaId}/${Date.now()}-${i}-${safeName}`;
+
+      try {
+        const raw = base64.includes(',') ? base64.split(',')[1] : base64;
+        const bin = Uint8Array.from(atob(raw), c => c.charCodeAt(0));
+        await supabase!.storage.from('evidencias').upload(path, bin, { contentType: 'image/jpeg', upsert: true });
+      } catch {
+        // storage opcional: não interromper fluxo existente
+      }
+
+      await supabase!.from('fotos').upsert({
+        id: `foto-evid-${denunciaId}-${ev.file_hash.slice(0, 12)}-${i}`,
+        denuncia_id: denunciaId,
+        base64,
+        tipo: 'relatorio',
+        file_name: ev.file_name || safeName,
+        file_hash: ev.file_hash,
+        captured_at: ev.captured_at,
+        capture_lat: ev.capture_lat ?? null,
+        capture_lng: ev.capture_lng ?? null,
+        uploaded_by: fiscalId,
+        storage_path: path,
+      });
+    }
+  } catch {
+    // silencioso por requisito
+  }
 }
 
 // ============================================
@@ -520,7 +600,12 @@ export async function deleteUserAccount(email: string): Promise<boolean> {
   }
 }
 
-export async function registerUserAccount(email: string, provider: string = 'email', password?: string): Promise<void> {
+export async function registerUserAccount(
+  email: string,
+  provider: string = 'email',
+  password?: string,
+  opts?: { accessType?: 'denunciante' | 'servidor'; serverType?: 'fiscal' | 'gerente' | null }
+): Promise<void> {
   // NÃO depende de ok() — tenta SEMPRE salvar no Supabase diretamente
   if (!supabase || !email || email === 'anonymous') {
     addLog(`⚠️ registerUserAccount: sem supabase ou email inválido (${email})`);
@@ -534,10 +619,11 @@ export async function registerUserAccount(email: string, provider: string = 'ema
       id: `ua-${email.replace(/[^a-z0-9]/gi, '-')}`,
       email: email.toLowerCase(),
       provider,
-      ultimo_acesso: new Date().toISOString(),
+      ultimo_acesso_at: new Date().toISOString(),
       dispositivo: navigator.userAgent.substring(0, 100),
     };
-    if (provider === 'email' && password) payload.senha = password;
+    if (opts?.accessType) payload.access_type = opts.accessType;
+    if (opts?.serverType !== undefined) payload.server_type = opts.serverType;
 
     const { error } = await supabase
       .from('user_accounts')
@@ -552,7 +638,8 @@ export async function registerUserAccount(email: string, provider: string = 'ema
         provider,
         dispositivo: navigator.userAgent.substring(0, 100),
       };
-      if (provider === 'email' && password) insertPayload.senha = password;
+      if (opts?.accessType) insertPayload.access_type = opts.accessType;
+      if (opts?.serverType !== undefined) insertPayload.server_type = opts.serverType;
 
       const { error: insertError } = await supabase
         .from('user_accounts')
@@ -561,10 +648,11 @@ export async function registerUserAccount(email: string, provider: string = 'ema
         // Pode ser duplicata - tentar update
         if (insertError.message.includes('duplicate') || insertError.code === '23505') {
           const updatePayload: Record<string, any> = {
-            ultimo_acesso: new Date().toISOString(),
+            ultimo_acesso_at: new Date().toISOString(),
             dispositivo: navigator.userAgent.substring(0, 100),
           };
-          if (provider === 'email' && password) updatePayload.senha = password;
+          if (opts?.accessType) updatePayload.access_type = opts.accessType;
+          if (opts?.serverType !== undefined) updatePayload.server_type = opts.serverType;
 
           await supabase
             .from('user_accounts')
@@ -580,8 +668,65 @@ export async function registerUserAccount(email: string, provider: string = 'ema
     } else {
       addLog(`✅ Conta registrada (upsert): ${email}`);
     }
+
+    if (provider === 'email' && password) {
+      await supabase
+        .from('app_users')
+        .upsert({
+          id: `au-${email.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60),
+          email: email.toLowerCase(),
+          nome: email.split('@')[0],
+          tipo_acesso: opts?.accessType === 'servidor' ? (opts.serverType || 'fiscal') : 'cidadao',
+          matricula: null,
+          ativo: true,
+          senha_legacy: password,
+        }, { onConflict: 'email' });
+    }
   } catch (e: any) {
     addLog(`❌ Exceção registrar conta: ${e?.message}`);
+  }
+}
+
+export async function getAccountAccessByEmail(email: string): Promise<{ accessType: 'denunciante' | 'servidor'; serverType: 'fiscal' | 'gerente' | null }> {
+  if (!supabase || !email) return { accessType: 'denunciante', serverType: null };
+  const cleanEmail = email.trim().toLowerCase();
+  try {
+    const { data: ua } = await supabase
+      .from('user_accounts')
+      .select('access_type, server_type')
+      .eq('email', cleanEmail)
+      .limit(1)
+      .maybeSingle();
+
+    if (ua?.access_type === 'servidor') {
+      return { accessType: 'servidor', serverType: (ua.server_type as 'fiscal' | 'gerente' | null) || null };
+    }
+
+    const { data: appUser } = await supabase
+      .from('app_users')
+      .select('access_type, server_type')
+      .eq('email', cleanEmail)
+      .limit(1)
+      .maybeSingle();
+
+    if (appUser?.access_type === 'servidor') {
+      return { accessType: 'servidor', serverType: (appUser.server_type as 'fiscal' | 'gerente' | null) || null };
+    }
+
+    const fiscalId = `fsc-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+    const gerenteId = `ger-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+    const { data: prof } = await supabase
+      .from('profiles')
+      .select('tipo')
+      .in('id', [fiscalId, gerenteId])
+      .limit(1);
+
+    const serverTipo = (prof || []).find((p: any) => p?.tipo === 'fiscal' || p?.tipo === 'gerente')?.tipo;
+    if (serverTipo) return { accessType: 'servidor', serverType: serverTipo };
+
+    return { accessType: 'denunciante', serverType: null };
+  } catch {
+    return { accessType: 'denunciante', serverType: null };
   }
 }
 
@@ -594,10 +739,154 @@ export async function userAccountExists(email: string): Promise<boolean> {
       .eq('email', email.toLowerCase())
       .limit(1)
       .maybeSingle();
-    if (error) return false;
-    return !!data;
+    if (!error && data) return true;
+
+    const { data: appUser, error: appErr } = await supabase
+      .from('app_users')
+      .select('email')
+      .eq('email', email.toLowerCase())
+      .limit(1)
+      .maybeSingle();
+
+    if (appErr) return false;
+    return !!appUser;
   } catch {
     return false;
+  }
+}
+
+export async function checkUserAccountCredentials(
+  email: string,
+  password: string
+): Promise<'ok' | 'wrong_password' | 'not_found'> {
+  if (!supabase || !email || email === 'anonymous') return 'not_found';
+  try {
+    const { data, error } = await supabase
+      .from('user_accounts')
+      .select('email, senha')
+      .eq('email', email.toLowerCase())
+      .limit(1)
+      .maybeSingle();
+
+    if (!error && data) {
+      if ((data.senha || '') !== password) return 'wrong_password';
+      return 'ok';
+    }
+
+    const { data: appData, error: appError } = await supabase
+      .from('app_users')
+      .select('email, senha_legacy')
+      .eq('email', email.toLowerCase())
+      .limit(1)
+      .maybeSingle();
+
+    if (appError || !appData) return 'not_found';
+    if ((appData.senha_legacy || '') !== password) return 'wrong_password';
+    return 'ok';
+  } catch {
+    return 'not_found';
+  }
+}
+
+export async function ensureServerAccessByEmail(
+  email: string,
+  password: string,
+  tipo: 'fiscal' | 'gerente' = 'fiscal'
+): Promise<{ matricula: string; profileId: string } | null> {
+  if (!supabase || !email || !password) return null;
+  try {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanSenha = password.trim();
+    const prefix = tipo === 'gerente' ? 'GER' : 'FSC';
+    const profileId = `${prefix.toLowerCase()}-${cleanEmail.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60);
+    const nome = cleanEmail.split('@')[0] || (tipo === 'gerente' ? 'Gerente' : 'Fiscal');
+
+    const { data: existing } = await supabase
+      .from('profiles')
+      .select('id, matricula')
+      .eq('id', profileId)
+      .maybeSingle();
+
+    if (existing?.matricula) {
+      await supabase.from('profiles').update({ senha: cleanSenha, tipo }).eq('id', profileId);
+      return { matricula: existing.matricula, profileId };
+    }
+
+    const { data: rows } = await supabase
+      .from('profiles')
+      .select('matricula')
+      .ilike('matricula', `${prefix}-%`);
+
+    const maxCode = (rows || []).reduce((acc: number, row: any) => {
+      const m = (row?.matricula || '').toUpperCase().match(new RegExp(`^${prefix}-(\\d+)$`));
+      if (!m) return acc;
+      return Math.max(acc, Number(m[1]));
+    }, 0);
+
+    const matricula = `${prefix}-${String(maxCode + 1).padStart(3, '0')}`;
+    const payload = {
+      id: profileId,
+      nome,
+      tipo,
+      matricula,
+      senha: cleanSenha,
+      status: 'offline',
+      pontos: 0,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase.from('profiles').upsert(payload);
+    if (error) {
+      addLog(`❌ ensureServerAccessByEmail: ${error.message}`);
+      return null;
+    }
+
+    addLog(`✅ Acesso servidor criado para ${cleanEmail}: ${matricula}`);
+    return { matricula, profileId };
+  } catch (e: any) {
+    addLog(`❌ ensureServerAccessByEmail exceção: ${e?.message || e}`);
+    return null;
+  }
+}
+
+export async function listRegisteredAccounts(): Promise<Array<{
+  email: string;
+  provider?: string;
+  access_type?: string;
+  server_type?: string | null;
+}>> {
+  if (!supabase) return [];
+  try {
+    const { data: uaData, error: uaError } = await supabase
+      .from('user_accounts')
+      .select('email, provider, access_type, server_type')
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (!uaError && Array.isArray(uaData) && uaData.length > 0) {
+      return uaData.map((r: any) => ({
+        email: r.email,
+        provider: r.provider,
+        access_type: r.access_type,
+        server_type: r.server_type,
+      }));
+    }
+
+    const { data: appData, error: appError } = await supabase
+      .from('app_users')
+      .select('email, provider, access_type, server_type')
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (appError || !Array.isArray(appData)) return [];
+    return appData.map((r: any) => ({
+      email: r.email,
+      provider: r.provider,
+      access_type: r.access_type,
+      server_type: r.server_type,
+    }));
+  } catch {
+    return [];
   }
 }
 
@@ -641,6 +930,8 @@ function mapDenuncia(r: any): Denuncia {
     fotos: [],
     motivo_rejeicao: r.motivo_rejeicao,
     auth_email: r.auth_email || '',
+    ia_tipo_sugerido: r.ia_tipo_sugerido || undefined,
+    ia_urgencia_sugerida: r.ia_urgencia_sugerida || undefined,
   };
 }
 
@@ -655,6 +946,7 @@ function mapRelatorio(r: any): Relatorio {
     fotos: extras.fotos || [],
     os_2_0: extras.os_2_0 || false,
     os_4_0: extras.os_4_0 || false,
+    evidencia_fotos: extras.evidencia_fotos || [],
     created_at: r.created_at,
   };
 }
