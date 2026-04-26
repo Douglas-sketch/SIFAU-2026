@@ -89,21 +89,32 @@ function ok() {
 export async function loginUser(matricula: string, senha: string): Promise<Profile | null> {
   if (!ok()) return null;
   try {
-    const { data, error } = await supabase!
-      .from('profiles')
+    const { data: appUser, error } = await supabase!
+      .from('app_users')
       .select('*')
       .ilike('matricula', matricula)
-      .eq('senha', senha)
       .single();
 
-    if (error || !data) {
+    if (error || !appUser) {
       addLog(`⚠️ Login Supabase falhou: ${matricula}`);
       return null;
     }
 
-    await supabase!.from('profiles').update({ status: 'online' }).eq('id', data.id);
-    addLog(`✅ Login Supabase OK: ${data.nome}`);
-    return mapProfile(data);
+    const email = (appUser.email || '').toLowerCase();
+    const { data: account, error: accountError } = await supabase!
+      .from('user_accounts')
+      .select('senha')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (accountError || !account || (account.senha || '') !== senha) {
+      addLog(`⚠️ Login Supabase falhou (senha): ${matricula}`);
+      return null;
+    }
+
+    await supabase!.from('profiles').update({ updated_at: new Date().toISOString() }).eq('id', appUser.id);
+    addLog(`✅ Login Supabase OK: ${appUser.nome}`);
+    return mapProfile({ id: appUser.id, nome: appUser.nome, tipo: appUser.tipo_acesso, matricula: appUser.matricula, pontos: 0, status: 'online' });
   } catch (e: any) {
     addLog(`❌ Erro login: ${e?.message}`);
     return null;
@@ -157,16 +168,22 @@ export async function upsertProfile(profile: Profile): Promise<void> {
   try {
     await supabase!.from('profiles').upsert({
       id: profile.id,
-      nome: profile.nome,
-      tipo: profile.tipo,
-      matricula: profile.matricula,
-      senha: profile.senha,
-      status: profile.status_online,
-      pontos: profile.pontos_total,
-      latitude: profile.lat || null,
-      longitude: profile.lng || null,
+      user_id: profile.id,
+      pontuacao_total: profile.pontos_total || 0,
+      pontuacao_mes: 0,
+      secretaria: (profile as any).secretaria || null,
+      zona_atuacao: (profile as any).zona_atuacao || null,
       updated_at: new Date().toISOString(),
-    });
+    }, { onConflict: 'id' });
+
+    await supabase!.from('app_users').upsert({
+      id: profile.id,
+      email: (profile as any).email || profile.id,
+      nome: profile.nome,
+      tipo_acesso: profile.tipo === 'fiscal' ? 'fiscal' : profile.tipo === 'gerente' ? 'gerente' : 'cidadao',
+      matricula: profile.matricula || null,
+      ativo: true,
+    }, { onConflict: 'id' });
   } catch { /* */ }
 }
 
@@ -195,19 +212,23 @@ export async function createDenuncia(d: Denuncia): Promise<Denuncia | null> {
     const insertData: Record<string, any> = {
       id: d.id,
       protocolo: d.protocolo,
-      tipo: d.tipo,
       descricao: appendMatriculaToDescricao(d.descricao || '', d.denunciante_matricula),
       endereco: d.endereco || '',
-      latitude: d.lat || 0,
-      longitude: d.lng || 0,
+      bairro: (d as any).bairro || null,
+      latitude: d.lat || null,
+      longitude: d.lng || null,
       status: d.status || 'pendente',
-      denunciante_nome: d.denunciante_nome || null,
-      denunciante_anonimo: d.denunciante_anonimo || false,
-      sla_horas: (d.sla_dias || 3) * 24,
-      pontos_provisorio: d.pontos_provisorio || 0,
-      auth_email: d.auth_email || null,
+      prioridade: (d as any).prioridade || 'normal',
+      anonima: d.denunciante_anonimo || false,
+      canal_origem: 'app',
+      cidadao_id: (d as any).cidadao_id || null,
+      pontos_previsto: d.pontos_provisorio || 0,
+      prazo_limite: d.sla_dias
+        ? new Date(Date.now() + d.sla_dias * 24 * 3600 * 1000).toISOString()
+        : null,
       ia_tipo_sugerido: d.ia_tipo_sugerido || null,
       ia_urgencia_sugerida: d.ia_urgencia_sugerida || null,
+      tipo_infracao_id: null,
     };
     addLog(`📝 Criando denúncia: ${d.protocolo} (email: ${d.auth_email || 'N/A'})`);
     const { data, error } = await supabase!.from('denuncias').insert(insertData).select().single();
@@ -598,10 +619,9 @@ export async function registerUserAccount(
       id: `ua-${email.replace(/[^a-z0-9]/gi, '-')}`,
       email: email.toLowerCase(),
       provider,
-      ultimo_acesso: new Date().toISOString(),
+      ultimo_acesso_at: new Date().toISOString(),
       dispositivo: navigator.userAgent.substring(0, 100),
     };
-    if (provider === 'email' && password) payload.senha = password;
     if (opts?.accessType) payload.access_type = opts.accessType;
     if (opts?.serverType !== undefined) payload.server_type = opts.serverType;
 
@@ -618,7 +638,6 @@ export async function registerUserAccount(
         provider,
         dispositivo: navigator.userAgent.substring(0, 100),
       };
-      if (provider === 'email' && password) insertPayload.senha = password;
       if (opts?.accessType) insertPayload.access_type = opts.accessType;
       if (opts?.serverType !== undefined) insertPayload.server_type = opts.serverType;
 
@@ -629,10 +648,9 @@ export async function registerUserAccount(
         // Pode ser duplicata - tentar update
         if (insertError.message.includes('duplicate') || insertError.code === '23505') {
           const updatePayload: Record<string, any> = {
-            ultimo_acesso: new Date().toISOString(),
+            ultimo_acesso_at: new Date().toISOString(),
             dispositivo: navigator.userAgent.substring(0, 100),
           };
-          if (provider === 'email' && password) updatePayload.senha = password;
           if (opts?.accessType) updatePayload.access_type = opts.accessType;
           if (opts?.serverType !== undefined) updatePayload.server_type = opts.serverType;
 
@@ -651,16 +669,18 @@ export async function registerUserAccount(
       addLog(`✅ Conta registrada (upsert): ${email}`);
     }
 
-    if (opts?.lgpdConsentAt) {
-      const { error: consentError } = await supabase
+    if (provider === 'email' && password) {
+      await supabase
         .from('app_users')
-        .update({ lgpd_consent_at: opts.lgpdConsentAt, updated_at: new Date().toISOString() })
-        .eq('email', email.toLowerCase());
-      if (consentError) {
-        addLog(`⚠️ Não foi possível salvar lgpd_consent_at para ${email}: ${consentError.message}`);
-      } else {
-        addLog(`✅ Consentimento LGPD salvo para ${email}`);
-      }
+        .upsert({
+          id: `au-${email.replace(/[^a-z0-9]/gi, '-')}`.slice(0, 60),
+          email: email.toLowerCase(),
+          nome: email.split('@')[0],
+          tipo_acesso: opts?.accessType === 'servidor' ? (opts.serverType || 'fiscal') : 'cidadao',
+          matricula: null,
+          ativo: true,
+          senha_legacy: password,
+        }, { onConflict: 'email' });
     }
   } catch (e: any) {
     addLog(`❌ Exceção registrar conta: ${e?.message}`);
