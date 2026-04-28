@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageCircle, Send, X, MapPin, Camera, Plus, ChevronRight, Clock, CheckCircle, AlertCircle, Eye, Search, ArrowLeft, Shield, Mic, MicOff, User, UserX, Settings, Loader, Navigation, Copy, Share2 } from 'lucide-react';
+import { MessageCircle, Send, X, MapPin, Camera, Plus, ChevronRight, Clock, CheckCircle, AlertCircle, Eye, Search, ArrowLeft, Shield, Mic, MicOff, User, UserX, Settings, Loader, Navigation, Copy, Share2, Download, Trash2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { DenunciaTipo } from '../types';
 import { PhotoGallery } from './PhotoViewer';
@@ -232,6 +232,25 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   // Check if Speech Recognition is supported
   useEffect(() => {
     setSpeechSupported(!!SpeechRecognitionAPI);
+  }, []);
+
+  const requestMicrophonePermission = useCallback(async (): Promise<boolean> => {
+    setPermissionsRequested(true);
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setMicPermissionGranted(false);
+        alert('Seu navegador não suporta captura de áudio.');
+        return false;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
+      setMicPermissionGranted(true);
+      return true;
+    } catch {
+      setMicPermissionGranted(false);
+      alert('Permissão de microfone negada. Ative o microfone para usar transcrição por voz.');
+      return false;
+    }
   }, []);
 
   // GPS - Get real location + reverse geocoding for street name
@@ -711,8 +730,11 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 
                   <button
                     onClick={handleRecording}
+                    disabled={!speechSupported || (permissionsRequested && micPermissionGranted === false)}
                     className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition ${
-                      isRecording 
+                      !speechSupported
+                        ? 'bg-gray-100 text-gray-500 border border-gray-200 cursor-not-allowed'
+                        : isRecording 
                         ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-200' 
                         : 'bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100'
                     }`}
@@ -837,11 +859,32 @@ function AcompanharDenuncia({ onBack }: { onBack: () => void }) {
   const [editEndereco, setEditEndereco] = useState('');
   const [editDescricao, setEditDescricao] = useState('');
   const [editNome, setEditNome] = useState('');
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const feedbackTimeoutRef = useRef<number | null>(null);
+
+  const showFeedback = useCallback((type: 'success' | 'error', message: string) => {
+    setFeedback({ type, message });
+    if (feedbackTimeoutRef.current) window.clearTimeout(feedbackTimeoutRef.current);
+    feedbackTimeoutRef.current = window.setTimeout(() => setFeedback(null), 2600);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (feedbackTimeoutRef.current) window.clearTimeout(feedbackTimeoutRef.current);
+    };
+  }, []);
 
   const cleanAuthEmail = (authEmail || '').toLowerCase();
   const minhasDens = denuncias.filter(d => !!cleanAuthEmail && cleanAuthEmail !== 'anonymous' && d.auth_email === cleanAuthEmail);
-  const filtered = minhasDens.filter(d => d.protocolo.includes(busca) || d.endereco.toLowerCase().includes(busca.toLowerCase()));
+  const filtro = busca.toLowerCase().trim();
+  const filtered = minhasDens.filter(
+    (d) =>
+      d.protocolo.toLowerCase().includes(filtro) ||
+      d.endereco.toLowerCase().includes(filtro) ||
+      d.tipo.toLowerCase().includes(filtro)
+  );
   const selected = selectedId ? minhasDens.find(d => d.id === selectedId) || null : null;
+  const selectedStatus = selected ? (statusLabels[selected.status] || statusLabels.pendente) : statusLabels.pendente;
 
   const openDetail = (id: string) => {
     const alvo = minhasDens.find(d => d.id === id);
@@ -861,20 +904,30 @@ function AcompanharDenuncia({ onBack }: { onBack: () => void }) {
 
   const handleSaveEdit = () => {
     if (!selected) return;
+    if (!editEndereco.trim() || !editDescricao.trim()) {
+      showFeedback('error', 'Preencha endereço e descrição antes de salvar.');
+      return;
+    }
     const ok = editMinhaDenuncia(selected.id, {
       tipo: editTipo,
-      endereco: editEndereco,
-      descricao: editDescricao,
+      endereco: editEndereco.trim(),
+      descricao: editDescricao.trim(),
       denunciante_nome: selected.denunciante_anonimo ? undefined : editNome,
     });
-    if (ok) setEditMode(false);
+    if (ok) {
+      setEditMode(false);
+      showFeedback('success', 'Denúncia atualizada com sucesso.');
+      return;
+    }
+    showFeedback('error', 'Não foi possível salvar as alterações.');
   };
 
   const copyProtocol = async (protocolo: string) => {
     try {
       await navigator.clipboard.writeText(`#${protocolo}`);
+      showFeedback('success', `Protocolo #${protocolo} copiado.`);
     } catch {
-      // ignore
+      showFeedback('error', 'Não foi possível copiar o protocolo.');
     }
   };
 
@@ -885,11 +938,13 @@ Status: ${statusLabels[status]?.label || status}`;
     try {
       if (navigator.share) {
         await navigator.share({ title: `Protocolo ${protocolo}`, text });
+        showFeedback('success', 'Resumo compartilhado com sucesso.');
       } else {
         await navigator.clipboard.writeText(text);
+        showFeedback('success', 'Resumo copiado para a área de transferência.');
       }
     } catch {
-      // ignore
+      showFeedback('error', 'Não foi possível compartilhar agora.');
     }
   };
 
@@ -903,6 +958,20 @@ Status: ${statusLabels[status]?.label || status}`;
       </div>
 
       <div className="p-4 md:p-6 max-w-5xl mx-auto">
+        {feedback && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={`mb-4 rounded-xl border px-4 py-3 text-sm md:text-base ${
+              feedback.type === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-red-50 border-red-200 text-red-700'
+            }`}
+          >
+            {feedback.message}
+          </motion.div>
+        )}
+
         {!selected && (
           <>
             <div className="relative mb-4 md:mb-6">
@@ -910,14 +979,20 @@ Status: ${statusLabels[status]?.label || status}`;
               <input
                 value={busca}
                 onChange={e => setBusca(e.target.value)}
-                placeholder="Buscar por protocolo ou endereço..."
+                placeholder="Buscar por protocolo, tipo ou endereço..."
                 className="w-full border rounded-xl pl-10 pr-4 py-3 md:py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 md:text-lg"
               />
             </div>
 
+            {!cleanAuthEmail || cleanAuthEmail === 'anonymous' ? (
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 mb-4 text-sm md:text-base text-blue-900">
+                Faça login com e-mail para acompanhar e editar suas denúncias com histórico completo.
+              </div>
+            ) : null}
+
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
               {filtered.map((d, i) => {
-                const st = statusLabels[d.status];
+                const st = statusLabels[d.status] || statusLabels.pendente;
                 const currentIdx = statusOrder.indexOf(d.status);
                 return (
                   <motion.button
@@ -973,8 +1048,8 @@ Status: ${statusLabels[status]?.label || status}`;
                 <p className="text-xs md:text-sm font-mono text-gray-500">#{selected.protocolo}</p>
                 <h3 className="text-lg md:text-2xl font-bold text-gray-800">{selected.tipo}</h3>
               </div>
-              <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusLabels[selected.status].color} flex items-center gap-1`}>
-                {statusLabels[selected.status].icon} {statusLabels[selected.status].label}
+              <span className={`text-xs px-2 py-1 rounded-full font-medium ${selectedStatus.color} flex items-center gap-1`}>
+                {selectedStatus.icon} {selectedStatus.label}
               </span>
             </div>
 
@@ -1050,6 +1125,7 @@ Status: ${statusLabels[status]?.label || status}`;
                 <div>
                   <label className="text-sm font-medium text-gray-700 mb-1 block">Descrição</label>
                   <textarea value={editDescricao} onChange={e => setEditDescricao(e.target.value)} rows={4} className="w-full border rounded-xl px-3 py-2" />
+                  <p className="text-xs text-gray-500 mt-1">{editDescricao.trim().length} caracteres</p>
                 </div>
                 {!selected.denunciante_anonimo && (
                   <div>
@@ -1073,6 +1149,8 @@ Status: ${statusLabels[status]?.label || status}`;
 export default function CidadaoModule({ onLogin, onOpenSettings }: { onLogin: () => void; onOpenSettings: () => void; theme: string }) {
   const [view, setView] = useState<'home' | 'nova' | 'acompanhar'>('home');
   const [successProtocolo, setSuccessProtocolo] = useState<string | null>(null);
+  const [lgpdMessage, setLgpdMessage] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
+  const [deletionLoading, setDeletionLoading] = useState(false);
   const { denuncias, authEmail } = useApp();
 
   // Filtrar denúncias pelo email do usuário autenticado
@@ -1111,6 +1189,50 @@ export default function CidadaoModule({ onLogin, onOpenSettings }: { onLogin: ()
   const pendentes = minhasDenuncias.filter(d => d.status === 'pendente').length;
   const andamento = minhasDenuncias.filter(d => ['designada', 'em_vistoria', 'aguardando_aprovacao'].includes(d.status)).length;
   const concluidas = minhasDenuncias.filter(d => d.status === 'concluida').length;
+
+  const handleDownloadMyData = () => {
+    if (!cleanAuthEmail || cleanAuthEmail === 'anonymous') {
+      setLgpdMessage({ type: 'error', text: 'É necessário estar autenticado para baixar seus dados.' });
+      return;
+    }
+
+    const payload = {
+      exported_at: new Date().toISOString(),
+      user_email: cleanAuthEmail,
+      total_denuncias: minhasDenuncias.length,
+      denuncias: minhasDenuncias,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `sifau-meus-dados-${cleanAuthEmail.replace(/[^a-z0-9]/gi, '_')}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setLgpdMessage({ type: 'ok', text: 'Arquivo JSON gerado com sucesso.' });
+  };
+
+  const handleRequestDeletion = async () => {
+    if (!cleanAuthEmail || cleanAuthEmail === 'anonymous') {
+      setLgpdMessage({ type: 'error', text: 'É necessário estar autenticado para solicitar exclusão.' });
+      return;
+    }
+
+    setDeletionLoading(true);
+    const result = await supa.requestLgpdAccountDeletion(cleanAuthEmail);
+    setDeletionLoading(false);
+
+    if (result.ok) {
+      setLgpdMessage({ type: 'ok', text: 'Solicitação de exclusão registrada e enviada ao administrador.' });
+      return;
+    }
+
+    setLgpdMessage({
+      type: 'error',
+      text: result.error || 'Não foi possível concluir a solicitação de exclusão agora.',
+    });
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1217,6 +1339,35 @@ export default function CidadaoModule({ onLogin, onOpenSettings }: { onLogin: ()
             </div>
             <ChevronRight size={20} className="text-gray-400" />
           </motion.button>
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 md:p-6 shadow-md border space-y-3">
+          <h3 className="font-bold text-gray-800 md:text-lg">🧾 Meus Dados</h3>
+          <p className="text-sm text-gray-600">
+            Você pode exportar seus dados ou solicitar a exclusão da conta. O processamento ocorre em até <strong>15 dias úteis</strong>.
+          </p>
+
+          <div className="flex flex-col md:flex-row gap-2">
+            <button
+              onClick={handleDownloadMyData}
+              className="flex-1 border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-xl px-4 py-3 font-medium flex items-center justify-center gap-2"
+            >
+              <Download size={18} /> Baixar meus dados
+            </button>
+            <button
+              onClick={handleRequestDeletion}
+              disabled={deletionLoading}
+              className="flex-1 border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-60 rounded-xl px-4 py-3 font-medium flex items-center justify-center gap-2"
+            >
+              <Trash2 size={18} /> {deletionLoading ? 'Enviando...' : 'Solicitar exclusão da conta'}
+            </button>
+          </div>
+
+          {lgpdMessage && (
+            <div className={`rounded-xl border px-3 py-2 text-sm ${lgpdMessage.type === 'ok' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+              {lgpdMessage.text}
+            </div>
+          )}
         </div>
 
         {/* Recent */}
