@@ -3,6 +3,8 @@ import { Profile, Denuncia, Relatorio, AutoInfracao, HistoricoAtividade, Mensage
 import { mockProfiles, mockDenuncias, mockRelatorios, mockAutos, mockHistorico, mockMensagens } from '../mockData';
 import * as supa from '../lib/supabaseService';
 
+const devLog = import.meta.env.DEV ? console.log : () => {};
+
 interface Notification {
   id: string;
   message: string;
@@ -152,7 +154,7 @@ export const useApp = () => useContext(AppContext);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const initialEmail = 'anonymous';
-  const stored = null;
+  const stored = loadFromStorage();
   const initialProfiles = resetAllStatusesToOffline(ensureAllProfiles(mockProfiles));
   const [profiles, setProfiles] = useState<Profile[]>(initialProfiles);
   const [denuncias, setDenuncias] = useState<Denuncia[]>(stored?.denuncias?.length ? stored.denuncias : mockDenuncias);
@@ -232,14 +234,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let cancelled = false;
 
     async function tryConnect() {
-      console.log('🔄 Verificando conexão com Supabase...');
+      devLog('🔄 Verificando conexão com Supabase...');
       const ok = await supa.checkConnection();
       if (cancelled) return;
 
       setIsOnline(ok);
 
       if (ok) {
-        console.log('🟢 Supabase ONLINE — sincronizando dados...');
+        devLog('🟢 Supabase ONLINE — sincronizando dados...');
         try {
           const [profs, dens, hists] = await Promise.all([
             supa.getAllProfiles(),
@@ -275,7 +277,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           console.warn('⚠️ Erro ao sincronizar:', e);
         }
       } else {
-        console.log('🟡 Supabase OFFLINE — usando dados locais');
+        devLog('🟡 Supabase OFFLINE — usando dados locais');
       }
     }
 
@@ -399,7 +401,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return ensureAllProfiles([...updated, ...extras]);
           });
         }
-      } catch { /* ignore */ }
+      } catch (err) { devLog('[SIFAU] erro silenciado:', err); }
     }, 5000);
 
     return () => {
@@ -481,12 +483,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const login = useCallback(async (matricula: string, senha: string): Promise<Profile | null> => {
     const mat = matricula.trim().toUpperCase();
     const pwd = senha.trim();
-    console.log(`🔐 Login: "${mat}"`);
+    devLog(`🔐 Login: "${mat}"`);
 
     // ALWAYS check hardcoded first
     const cred = CREDENTIALS[mat];
     if (cred && cred.senha === pwd) {
-      console.log(`✅ Hardcoded match: ${cred.profile.nome}`);
+      devLog(`✅ Hardcoded match: ${cred.profile.nome}`);
       let user: Profile = { ...cred.profile, status_online: 'online' as const };
 
       // Try enriching from Supabase (non-blocking)
@@ -532,7 +534,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return merged;
           });
         } catch (e) {
-          console.log('⚠️ Supabase enrich failed:', e);
+          devLog('⚠️ Supabase enrich failed:', e);
         }
       }
 
@@ -566,7 +568,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    console.log(`❌ Login FAILED for "${mat}"`);
+    devLog(`❌ Login FAILED for "${mat}"`);
     return null;
   }, [isOnline]);
 
@@ -588,20 +590,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const email = authEmail || getAuthEmail() || 'anonymous';
     const newD: Denuncia = {
       ...d, id: `den-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-      protocolo: `2026-${String(num).padStart(5, '0')}`,
+      protocolo: `REC-${new Date().getFullYear()}-${String(num).padStart(5, '0')}-${Math.random().toString(36).substr(2, 3).toUpperCase()}`,
       auth_email: email,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    console.log(`📝 Nova denúncia criada: ${newD.protocolo} | Email: ${email} | Tipo: ${newD.tipo}`);
+    devLog(`📝 Nova denúncia criada: ${newD.protocolo} | Email: ${email} | Tipo: ${newD.tipo}`);
     setDenuncias(prev => [newD, ...prev]);
     if (isOnline) {
       supa.createDenuncia(newD).then(result => {
-        if (result) console.log(`✅ Denúncia salva no Supabase: ${newD.protocolo}`);
-        else console.log(`⚠️ Denúncia NÃO salvou no Supabase: ${newD.protocolo}`);
+        if (result) devLog(`✅ Denúncia salva no Supabase: ${newD.protocolo}`);
+        else devLog(`⚠️ Denúncia NÃO salvou no Supabase: ${newD.protocolo}`);
       });
     } else {
-      console.log(`💾 Denúncia salva localmente (offline): ${newD.protocolo}`);
+      devLog(`💾 Denúncia salva localmente (offline): ${newD.protocolo}`);
     }
     return newD;
   }, [denuncias.length, isOnline, authEmail]);

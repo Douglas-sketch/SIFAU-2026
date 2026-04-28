@@ -183,6 +183,9 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   const [isClassifyingDescricao, setIsClassifyingDescricao] = useState(false);
   const recognitionRef = useRef<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const SpeechRecognitionAPI = typeof window !== 'undefined'
+    ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
+    : null;
 
   const draftKey = `sifau_denuncia_draft_${(authEmail || 'anonymous').toLowerCase()}`;
 
@@ -228,8 +231,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 
   // Check if Speech Recognition is supported
   useEffect(() => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    setSpeechSupported(!!SR);
+    setSpeechSupported(!!SpeechRecognitionAPI);
   }, []);
 
   const requestMicrophonePermission = useCallback(async (): Promise<boolean> => {
@@ -379,10 +381,8 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   }, [step, permissionsRequested, requestRequiredPermissions]);
 
   // Speech Recognition - Real voice to text
-  const handleRecording = useCallback(async () => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    
-    if (!SR) {
+  const handleRecording = useCallback(() => {
+    if (!SpeechRecognitionAPI) {
       alert('Gravação de voz não suportada neste navegador. Use o Chrome ou Edge.');
       return;
     }
@@ -393,12 +393,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
       return;
     }
 
-    if (micPermissionGranted !== true) {
-      const granted = await requestMicrophonePermission();
-      if (!granted) return;
-    }
-
-    const recognition = new SR();
+    const recognition = new SpeechRecognitionAPI();
     recognition.lang = 'pt-BR';
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -442,7 +437,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
     };
 
     recognition.start();
-  }, [isRecording, ensureMicrophonePermission]);
+  }, [isRecording, ensureMicrophonePermission, SpeechRecognitionAPI]);
 
   useEffect(() => {
     return () => {

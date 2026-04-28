@@ -12,6 +12,8 @@ import { getProfilePhoto } from './lib/profilePhoto';
 import { requestEssentialPermissions } from './lib/appPermissions';
 import Logo from './components/Logo';
 
+const devLog = import.meta.env.DEV ? console.log : () => {};
+
 const THEME_GRADIENTS: Record<AppTheme, string> = {
   default: 'from-blue-800 via-blue-900 to-slate-900',
   dark: 'from-gray-800 via-gray-900 to-black',
@@ -90,7 +92,7 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
     const resolvedType: AccessType = profileType === 'fiscal' || profileType === 'gerente'
       ? 'servidor'
       : (profileType || 'denunciante');
-    console.log('✅ Auth completo:', cleanEmail);
+    devLog('✅ Auth completo:', cleanEmail);
     onAuthenticated(cleanEmail, resolvedType);
   };
 
@@ -1144,7 +1146,7 @@ function AppContent() {
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.user?.email) {
             const sessionEmail = session.user.email;
-            console.log('🔄 Sessão Supabase restaurada:', sessionEmail);
+            devLog('🔄 Sessão Supabase restaurada:', sessionEmail);
             const roleInfo = await supa.getAccountAccessByEmail(sessionEmail);
             setAuthEmail(sessionEmail);
             setAccessType(roleInfo.accessType);
@@ -1155,7 +1157,7 @@ function AppContent() {
             setIsAuthenticated(true);
             return;
           }
-        } catch { /* continue */ }
+        } catch (err) { devLog('[SIFAU] erro silenciado:', err); }
       }
       
       setIsAuthenticated(false);
@@ -1228,9 +1230,7 @@ function AppContent() {
           // Se não houver histórico, não fecha o app.
         });
         removeListener = () => listener.remove();
-      } catch {
-        // plugin indisponível no ambiente web
-      }
+      } catch (err) { devLog('[SIFAU] erro silenciado:', err); }
     };
 
     setupBackButton();
@@ -1266,7 +1266,7 @@ function AppContent() {
     sessionStorage.setItem(permissionsKey, '1');
     requestEssentialPermissions()
       .then((result) => {
-        console.log('🔐 Permissões solicitadas:', result);
+        devLog('🔐 Permissões solicitadas:', result);
       })
       .catch(() => {
         console.warn('⚠️ Não foi possível solicitar permissões essenciais agora.');
@@ -1275,7 +1275,7 @@ function AppContent() {
 
   const handleLogoutAuth = async () => {
     if (supabase) {
-      try { await supabase.auth.signOut(); } catch { /* ignore */ }
+      try { await supabase.auth.signOut(); } catch (err) { devLog('[SIFAU] erro silenciado:', err); }
     }
     clearSession();
     sessionStorage.removeItem('sifau_screen');
@@ -1336,7 +1336,7 @@ function AppContent() {
             // Delete account with 30-day recovery
             const deleted = await supa.deleteUserAccount(authEmail);
             if (deleted) {
-              console.log('🗑️ Conta agendada para exclusão:', authEmail);
+              devLog('🗑️ Conta agendada para exclusão:', authEmail);
             }
             // Clear all local data for this email
             const keys = Object.keys(localStorage);
