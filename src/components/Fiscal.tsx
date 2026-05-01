@@ -1250,7 +1250,7 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
       const file = files[i];
       const MAX_FOTO_BYTES = 5 * 1024 * 1024; // 5MB
       if (file.size > MAX_FOTO_BYTES) {
-        alert(`Foto muito grande (${(file.size / 1024 / 1024).toFixed(1)}MB). Máximo: 5MB.`);
+        alert(`A foto "${file.name}" é muito grande (${(file.size / 1024 / 1024).toFixed(1)}MB). Máximo: 5MB.`);
         continue;
       }
       const bytes = await file.arrayBuffer();

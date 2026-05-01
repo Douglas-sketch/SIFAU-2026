@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageCircle, Send, X, MapPin, Camera, Plus, ChevronRight, Clock, CheckCircle, AlertCircle, Eye, Search, ArrowLeft, Shield, Mic, MicOff, User, UserX, Settings, Loader, Navigation, Copy, Share2, Download, Trash2 } from 'lucide-react';
+import { MessageCircle, Send, X, MapPin, Camera, Plus, ChevronRight, Clock, CheckCircle, AlertCircle, Eye, Search, ArrowLeft, Shield, Mic, MicOff, User, UserX, Settings, Loader, Navigation, Copy, Share2, LogOut } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { DenunciaTipo } from '../types';
 import { PhotoGallery } from './PhotoViewer';
@@ -64,13 +64,14 @@ function getSlaProgress(createdAt: string, slaDias: number): number {
   return Math.min(100, Math.round((elapsed / totalMs) * 100));
 }
 
-const chatResponses: Record<string, string> = {
-  'anonimato': 'Sim! Você pode fazer denúncias de forma totalmente anônima. Seus dados pessoais não serão compartilhados com ninguém.',
-  'prazo': 'O prazo médio de atendimento é de 3 a 5 dias úteis, dependendo da gravidade da denúncia. Casos urgentes como desmatamento têm prioridade.',
-  'acompanhar': 'Você pode acompanhar sua denúncia usando o número de protocolo na seção "Acompanhar Denúncia" da tela inicial.',
-  'multa': 'As multas variam de acordo com o tipo de infração. Por exemplo, construções irregulares podem gerar multas de R$ 321,67 a R$ 13.785,74.',
-  'como': 'Para fazer uma denúncia, clique no botão "Nova Denúncia" na tela inicial e siga os 3 passos simples!',
-};
+const CHIPS = ['Como denunciar', 'Prazos', 'Multas', 'Anonimato', 'Acompanhar'];
+const chatResponses: Array<{ keys: string[]; text: string }> = [
+  { keys: ['anonimato', 'anônimo', 'anonima'], text: 'Sim! Você pode fazer denúncias de forma totalmente anônima. Seus dados pessoais não serão compartilhados com ninguém.' },
+  { keys: ['prazo', 'prazos', 'tempo', 'demora'], text: 'O prazo médio de atendimento é de 3 a 5 dias úteis, dependendo da gravidade da denúncia. Casos urgentes como desmatamento têm prioridade.' },
+  { keys: ['acompanhar', 'acompanhamento', 'status', 'protocolo'], text: 'Você pode acompanhar sua denúncia usando o número de protocolo na seção "Acompanhar Denúncia" da tela inicial.' },
+  { keys: ['multa', 'multas', 'valor', 'penalidade'], text: 'As multas variam de acordo com o tipo de infração. Por exemplo, construções irregulares podem gerar multas de R$ 321,67 a R$ 13.785,74.' },
+  { keys: ['como', 'denunciar', 'denúncia', 'registrar'], text: 'Para fazer uma denúncia, clique no botão "Nova Denúncia" na tela inicial e siga os 3 passos simples!' },
+];
 
 function Chatbot() {
   const [open, setOpen] = useState(false);
@@ -88,8 +89,8 @@ function Chatbot() {
     setTimeout(() => {
       const lower = userMsg.toLowerCase();
       let response = 'Desculpe, não entendi. Tente perguntar sobre: anonimato, prazos, como denunciar, acompanhamento ou multas.';
-      for (const [key, val] of Object.entries(chatResponses)) {
-        if (lower.includes(key)) { response = val; break; }
+      for (const item of chatResponses) {
+        if (item.keys.some(key => lower.includes(key))) { response = item.text; break; }
       }
       setMessages(prev => [...prev, { from: 'bot', text: response }]);
       messagesEnd.current?.scrollIntoView({ behavior: 'smooth' });
@@ -135,6 +136,17 @@ function Chatbot() {
               <button onClick={handleSend} className="bg-blue-600 text-white rounded-xl p-2 hover:bg-blue-700 transition">
                 <Send size={18} />
               </button>
+            </div>
+            <div className="px-3 pb-2 flex flex-wrap gap-2">
+              {CHIPS.map(chip => (
+                <button
+                  key={chip}
+                  onClick={() => { setInput(chip); }}
+                  className="text-xs bg-blue-50 text-blue-600 border border-blue-200 px-2 py-1 rounded-full hover:bg-blue-100 transition"
+                >
+                  {chip}
+                </button>
+              ))}
             </div>
             <div className="px-3 pb-3">
               <button disabled className="w-full text-xs text-gray-400 bg-gray-100 rounded-lg py-2 cursor-not-allowed">
@@ -1127,7 +1139,7 @@ Status: ${statusLabels[status]?.label || status}`;
   );
 }
 
-export default function CidadaoModule({ onLogin, onOpenSettings }: { onLogin: () => void; onOpenSettings: () => void; theme: string }) {
+export default function CidadaoModule({ onLogin, onOpenSettings, onLogout }: { onLogin: () => void; onOpenSettings: () => void; onLogout: () => void; theme: string }) {
   const [view, setView] = useState<'home' | 'nova' | 'acompanhar'>('home');
   const [successProtocolo, setSuccessProtocolo] = useState<string | null>(null);
   const [lgpdMessage, setLgpdMessage] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
@@ -1229,6 +1241,11 @@ export default function CidadaoModule({ onLogin, onOpenSettings }: { onLogin: ()
               <button onClick={onOpenSettings} className="bg-white/15 backdrop-blur rounded-xl p-2.5 md:p-3 hover:bg-white/25 transition" title="Configurações">
                 <Settings size={20} className="md:w-5 md:h-5" />
               </button>
+              {authEmail && authEmail !== 'anonymous' && (
+                <button onClick={onLogout} className="bg-white/15 backdrop-blur rounded-xl p-2.5 md:p-3 hover:bg-white/25 transition" title="Sair da conta">
+                  <LogOut size={20} className="md:w-5 md:h-5" />
+                </button>
+              )}
               <button onClick={onLogin} className="bg-white/20 backdrop-blur rounded-xl px-4 py-2 md:px-6 md:py-3 text-sm md:text-base font-medium hover:bg-white/30 transition">
                 Área do Servidor
               </button>
@@ -1253,40 +1270,6 @@ export default function CidadaoModule({ onLogin, onOpenSettings }: { onLogin: ()
       </div>
 
       <div className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12 -mt-6 space-y-3 md:space-y-4 pb-24">
-        {/* Dashboard Estatísticas Pessoais */}
-        <div className="bg-white rounded-2xl p-4 md:p-6 shadow-md border">
-          <h3 className="font-bold text-gray-700 mb-3 md:text-lg">📊 Suas Estatísticas</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-center">
-              <p className="text-2xl md:text-3xl font-bold text-blue-700">{minhasDenuncias.length}</p>
-              <p className="text-xs text-blue-600 mt-1">Total</p>
-            </div>
-            <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-center">
-              <p className="text-2xl md:text-3xl font-bold text-yellow-700">{pendentes}</p>
-              <p className="text-xs text-yellow-600 mt-1">Pendentes</p>
-            </div>
-            <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
-              <p className="text-2xl md:text-3xl font-bold text-orange-700">{andamento}</p>
-              <p className="text-xs text-orange-600 mt-1">Em Andamento</p>
-            </div>
-            <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
-              <p className="text-2xl md:text-3xl font-bold text-green-700">{concluidas}</p>
-              <p className="text-xs text-green-600 mt-1">Concluídas</p>
-            </div>
-          </div>
-          {minhasDenuncias.length > 0 && (
-            <div className="mt-3">
-              <div className="flex justify-between text-xs text-gray-500 mb-1">
-                <span>Taxa de resolução</span>
-                <span>{minhasDenuncias.length > 0 ? Math.round((concluidas / minhasDenuncias.length) * 100) : 0}%</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div className="h-full bg-green-500 rounded-full transition-all" style={{ width: `${minhasDenuncias.length > 0 ? (concluidas / minhasDenuncias.length) * 100 : 0}%` }} />
-              </div>
-            </div>
-          )}
-        </div>
-
         {/* Action cards — side by side on larger screens */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
           <motion.button
@@ -1321,6 +1304,17 @@ export default function CidadaoModule({ onLogin, onOpenSettings }: { onLogin: ()
             <ChevronRight size={20} className="text-gray-400" />
           </motion.button>
         </div>
+        {minhasDenuncias.length > 0 && (
+          <div className="bg-white rounded-2xl p-4 md:p-6 shadow-md border">
+            <div className="flex justify-between text-xs text-gray-500 mb-1">
+              <span>Taxa de resolução</span>
+              <span>{minhasDenuncias.length > 0 ? Math.round((concluidas / minhasDenuncias.length) * 100) : 0}%</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div className="h-full bg-green-500 rounded-full transition-all" style={{ width: `${minhasDenuncias.length > 0 ? (concluidas / minhasDenuncias.length) * 100 : 0}%` }} />
+            </div>
+          </div>
+        )}
 
         <div className="bg-white rounded-2xl p-4 md:p-6 shadow-md border space-y-3">
           <h3 className="font-bold text-gray-800 md:text-lg">🧾 Meus Dados</h3>

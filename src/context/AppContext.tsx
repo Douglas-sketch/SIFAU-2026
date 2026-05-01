@@ -2,6 +2,9 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import { Profile, Denuncia, Relatorio, AutoInfracao, HistoricoAtividade, Mensagem, DenunciaStatus } from '../types';
 import { mockProfiles, mockDenuncias, mockRelatorios, mockAutos, mockHistorico, mockMensagens } from '../mockData';
 import * as supa from '../lib/supabaseService';
+import { SessionTimeout } from '../lib/sessionTimeout';
+
+const devLog = import.meta.env.DEV ? console.log : () => {};
 
 const devLog = import.meta.env.DEV ? console.log : () => {};
 
@@ -51,17 +54,6 @@ interface AppState {
 // ═══════════════════════════════════════════════════════════════
 const CREDENTIALS: Record<string, { senha: string; profile: Profile }> = {};
 
-// Device-specific storage: each device has its own data
-function getDeviceId(): string {
-  let id = localStorage.getItem('sifau_device_id');
-  if (!id) {
-    id = `dev-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    localStorage.setItem('sifau_device_id', id);
-  }
-  return id;
-}
-
-const DEVICE_ID = getDeviceId();
 const SERVER_SESSION_KEY = 'sifau_server_session_v1';
 
 // Auth email for per-account storage — reads from the same key as App.tsx saves to
@@ -164,6 +156,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const channelsRef = useRef<ReturnType<typeof supa.subscribeToMensagens>[]>([]);
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentUserRef = useRef<Profile | null>(null);
+  const sessionTimeoutRef = useRef<SessionTimeout | null>(null);
 
   useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
 
@@ -535,6 +528,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return [...prev, user];
       });
       setCurrentUser(user);
+      if (user.tipo === 'fiscal' || user.tipo === 'gerente') {
+        sessionTimeoutRef.current = new SessionTimeout(30, () => {
+          addNotification('Sessão expirada por inatividade. Faça login novamente.', 'warning');
+          if (syncIntervalRef.current) { clearInterval(syncIntervalRef.current); syncIntervalRef.current = null; }
+          channelsRef.current.forEach(ch => supa.unsubscribe(ch));
+          channelsRef.current = [];
+          setCurrentUser(null);
+          sessionTimeoutRef.current?.clear();
+          sessionTimeoutRef.current = null;
+          setAuthEmailState('anonymous');
+          try { localStorage.removeItem('sifau_auth_email'); } catch {}
+          try { localStorage.removeItem(SERVER_SESSION_KEY); } catch { /* */ }
+        });
+        sessionTimeoutRef.current.start();
+      }
       try { localStorage.setItem(SERVER_SESSION_KEY, JSON.stringify({ userId: user.id, ts: Date.now() })); } catch { /* */ }
       return user;
     }
@@ -551,6 +559,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return [...prev, user];
           });
           setCurrentUser(user);
+          if (user.tipo === 'fiscal' || user.tipo === 'gerente') {
+            sessionTimeoutRef.current = new SessionTimeout(30, () => {
+              addNotification('Sessão expirada por inatividade. Faça login novamente.', 'warning');
+              if (syncIntervalRef.current) { clearInterval(syncIntervalRef.current); syncIntervalRef.current = null; }
+              channelsRef.current.forEach(ch => supa.unsubscribe(ch));
+              channelsRef.current = [];
+              setCurrentUser(null);
+              sessionTimeoutRef.current?.clear();
+              sessionTimeoutRef.current = null;
+              setAuthEmailState('anonymous');
+              try { localStorage.removeItem('sifau_auth_email'); } catch {}
+              try { localStorage.removeItem(SERVER_SESSION_KEY); } catch { /* */ }
+            });
+            sessionTimeoutRef.current.start();
+          }
           try { localStorage.setItem(SERVER_SESSION_KEY, JSON.stringify({ userId: user.id, ts: Date.now() })); } catch { /* */ }
           return user;
         }
@@ -561,7 +584,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     devLog(`❌ Login FAILED for "${mat}"`);
     return null;
-  }, [isOnline]);
+  }, [isOnline, addNotification]);
 
   const logout = useCallback(() => {
     if (currentUser) {
@@ -572,6 +595,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     channelsRef.current.forEach(ch => supa.unsubscribe(ch));
     channelsRef.current = [];
     setCurrentUser(null);
+    sessionTimeoutRef.current?.clear();
+    sessionTimeoutRef.current = null;
     setAuthEmailState('anonymous');
     try { localStorage.removeItem('sifau_auth_email'); } catch {}
     try { localStorage.removeItem(SERVER_SESSION_KEY); } catch { /* */ }

@@ -1440,6 +1440,7 @@ function AppContent() {
           <CidadaoModule
             onLogin={() => navigateTo('login')}
             onOpenSettings={openSettings}
+            onLogout={handleLogoutAuth}
             theme={theme}
           />
         </motion.div>

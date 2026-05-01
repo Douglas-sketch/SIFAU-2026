@@ -1174,10 +1174,10 @@ export default function Settings({ onBack, currentTheme, onThemeChange, authEmai
 
               <div className="space-y-2">
                 <button disabled className="w-full rounded-xl py-3 md:py-4 font-medium text-sm md:text-base cursor-not-allowed flex items-center justify-center gap-2" style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-muted)' }}>
-                  <HeadphonesIcon size={18} /> Chat ao Vivo — Indisponível
+                  <HeadphonesIcon size={18} /> Chat ao Vivo — Indisponível <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Em breve</span>
                 </button>
                 <button disabled className="w-full rounded-xl py-3 md:py-4 font-medium text-sm md:text-base cursor-not-allowed flex items-center justify-center gap-2" style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-muted)' }}>
-                  <Phone size={18} /> Ligação — Indisponível
+                  <Phone size={18} /> Ligação — Indisponível <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Em breve</span>
                 </button>
               </div>
             </div>

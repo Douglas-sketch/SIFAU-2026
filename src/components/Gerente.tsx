@@ -10,6 +10,7 @@ import { Denuncia, OS_TABLE } from '../types';
 import { PhotoGallery } from './PhotoViewer';
 import Mensagens from './Mensagens';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, AreaChart, Area, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
+import { exportToPDF } from '../lib/pdfExporter';
 
 const statusLabels: Record<string, { label: string; color: string }> = {
   pendente: { label: 'Pendente', color: 'bg-yellow-500' },
@@ -377,87 +378,11 @@ function DenunciaDetail({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =
   };
 
   const handleGerarCertificadoEvidencia = () => {
-    if (!relatorio) return;
-    const JsPDFCtor = (window as any)?.jspdf?.jsPDF;
-    if (!JsPDFCtor) {
-      const rowsFallback = (evidenceRows.length ? evidenceRows : relatorio.fotos.map((_, i) => ({
-        file_name: `foto-${i + 1}.jpg`,
-        file_hash: 'NÃO INFORMADO',
-        captured_at: '',
-        capture_lat: undefined,
-        capture_lng: undefined,
-      }))).map((ev, idx) =>
-        `${idx + 1}. ${ev.file_name} | hash: ${ev.file_hash || 'N/I'} | captura: ${ev.captured_at ? new Date(ev.captured_at).toLocaleString('pt-BR') : 'N/I'} | gps: ${ev.capture_lat ?? 'N/I'}, ${ev.capture_lng ?? 'N/I'}`
-      );
-      const content = [
-        `Certificado de Evidência Fotográfica - SIFAU`,
-        `Protocolo: #${denuncia.protocolo}`,
-        `Fiscal: ${fiscal?.nome || 'N/I'} (${fiscal?.matricula || 'N/I'})`,
-        `Data do relatório: ${new Date(relatorio.created_at).toLocaleString('pt-BR')}`,
-        '',
-        'Lista de fotos e integridade:',
-        ...rowsFallback,
-        '',
-        `Documento gerado automaticamente pelo SIFAU em ${new Date().toLocaleString('pt-BR')}`,
-      ].join('\n');
-      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `certificado-evidencias-${denuncia.protocolo}.txt`;
-      a.click();
-      URL.revokeObjectURL(url);
-      return;
-    }
-
-    const doc = new JsPDFCtor();
-    const marginX = 14;
-    let y = 20;
-
-    doc.setFontSize(14);
-    doc.text('Certificado de Evidência Fotográfica - SIFAU', marginX, y);
-    y += 10;
-    doc.setFontSize(11);
-    doc.text(`Protocolo: #${denuncia.protocolo}`, marginX, y); y += 7;
-    doc.text(`Fiscal: ${fiscal?.nome || 'N/I'} (${fiscal?.matricula || 'N/I'})`, marginX, y); y += 7;
-    doc.text(`Data do relatório: ${new Date(relatorio.created_at).toLocaleString('pt-BR')}`, marginX, y); y += 9;
-
-    doc.setFontSize(12);
-    doc.text('Lista de fotos e integridade', marginX, y); y += 7;
-    doc.setFontSize(9);
-
-    const rows = evidenceRows.length ? evidenceRows : relatorio.fotos.map((_, i) => ({
-      file_name: `foto-${i + 1}.jpg`,
-      file_hash: 'NÃO INFORMADO',
-      captured_at: '',
-      capture_lat: undefined,
-      capture_lng: undefined,
-    }));
-
-    rows.forEach((ev, idx) => {
-      if (y > 260) { doc.addPage(); y = 20; }
-      doc.text(`${idx + 1}. ${ev.file_name || `foto-${idx + 1}.jpg`}`, marginX, y); y += 5;
-      doc.text(`Hash SHA-256: ${ev.file_hash || 'NÃO INFORMADO'}`, marginX + 3, y); y += 5;
-      doc.text(`Captura: ${ev.captured_at ? new Date(ev.captured_at).toLocaleString('pt-BR') : 'N/I'}`, marginX + 3, y); y += 5;
-      doc.text(`GPS: ${ev.capture_lat ?? 'N/I'}, ${ev.capture_lng ?? 'N/I'}`, marginX + 3, y); y += 7;
-    });
-
-    if (relatorio.assinatura_base64) {
-      if (y > 220) { doc.addPage(); y = 20; }
-      doc.setFontSize(10);
-      doc.text('Assinatura digital do fiscal:', marginX, y); y += 4;
-      try {
-        doc.addImage(relatorio.assinatura_base64, 'PNG', marginX, y, 70, 25);
-        y += 30;
-      } catch {
-        doc.text('(Não foi possível renderizar a assinatura no PDF)', marginX, y);
-        y += 6;
-      }
-    }
-
-    doc.setFontSize(9);
-    doc.text(`Documento gerado automaticamente pelo SIFAU em ${new Date().toLocaleString('pt-BR')}`, marginX, 288);
-    doc.save(`certificado-evidencias-${denuncia.protocolo}.pdf`);
+    const den = denuncias.find(d => d.id === selectedDenunciaId);
+    if (!den) return;
+    const rel = getRelatorio(den.id);
+    const aut = getAuto(den.id);
+    exportToPDF(den, rel, aut);
   };
 
   if (showDesignar) {
@@ -1223,6 +1148,13 @@ function AllDenunciasView({ onSelect }: { onSelect: (d: Denuncia) => void }) {
                 </motion.button>
               );
             })}
+          </div>
+        )}
+        {isOnline && denuncias.length === 0 && (
+          <div className="space-y-3">
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="h-20 rounded-xl bg-gradient-to-r from-gray-200 via-gray-100 to-gray-200 animate-pulse" />
+            ))}
           </div>
         )}
       </div>
