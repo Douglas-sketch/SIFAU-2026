@@ -26,7 +26,19 @@ type AccessType = 'denunciante' | 'servidor';
 type AccessType = 'denunciante' | 'servidor';
 type LocalAccount = { password: string; accessType: AccessType; serverType?: 'fiscal' | 'gerente'; createdAt: number };
 
-function clearSession() {}
+function clearSession() {
+  try {
+    const email = localStorage.getItem('sifau_auth_email') || '';
+    localStorage.removeItem('sifau_auth_email');
+    localStorage.removeItem('sifau_session_v3');
+    localStorage.removeItem('sifau_session_v2');
+    if (email && email !== 'anonymous') {
+      Object.keys(localStorage)
+        .filter(k => k.startsWith('sifau_data') && k.includes(email))
+        .forEach(k => localStorage.removeItem(k));
+    }
+  } catch {}
+}
 
 function getLocalAccounts(): Record<string, LocalAccount> {
   try {
@@ -167,6 +179,11 @@ function AuthScreen({ onAuthenticated, theme }: { onAuthenticated: (email?: stri
   const handleEmailRegister = async () => {
     if (!email.trim() || !password.trim()) {
       setError('Preencha todos os campos');
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      setError('Digite um e-mail válido (ex: nome@dominio.com)');
       return;
     }
     if (password.length < 6) {

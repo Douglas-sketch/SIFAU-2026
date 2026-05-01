@@ -50,11 +50,6 @@ interface AppState {
 // HARDCODED CREDENTIALS — Funciona SEMPRE, independente de tudo
 // ═══════════════════════════════════════════════════════════════
 const CREDENTIALS: Record<string, { senha: string; profile: Profile }> = {};
-mockProfiles.forEach(p => {
-  if (p.matricula && p.senha) {
-    CREDENTIALS[p.matricula.toUpperCase()] = { senha: p.senha, profile: p };
-  }
-});
 
 // Device-specific storage: each device has its own data
 function getDeviceId(): string {
@@ -89,7 +84,7 @@ function getAuthEmail(): string {
 // Dynamic storage key — changes when email changes
 function getStorageKey(email?: string): string {
   const e = email || getAuthEmail();
-  return `sifau_data_v20_${e}_${DEVICE_ID}`;
+  return `sifau_data_v21_${e}`;
 }
 
 function ensureAllProfiles(profiles: Profile[]): Profile[] {
@@ -343,16 +338,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     syncIntervalRef.current = setInterval(async () => {
       if (!currentUserRef.current) return;
       try {
-        const [freshMsgs, freshDens, freshProfs, freshRels, freshAutos, freshHists] = await Promise.all([
-          supa.getMensagens(currentUserRef.current.id),
-          supa.getAllDenuncias(),
+        const [freshProfs, freshRels, freshAutos, freshHists] = await Promise.all([
           supa.getAllProfiles(),
           supa.getAllRelatorios(),
           supa.getAllAutos(),
           supa.getAllHistorico(),
         ]);
-        if (freshMsgs.length) setMensagens(freshMsgs);
-        if (freshDens.length) setDenuncias(freshDens);
         if (freshRels.length) setRelatorios(prev => {
           const merged = [...prev];
           freshRels.forEach(fr => {
@@ -402,7 +393,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           });
         }
       } catch (err) { devLog('[SIFAU] erro silenciado:', err); }
-    }, 5000);
+    }, 30000);
 
     return () => {
       if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
@@ -581,6 +572,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     channelsRef.current.forEach(ch => supa.unsubscribe(ch));
     channelsRef.current = [];
     setCurrentUser(null);
+    setAuthEmailState('anonymous');
+    try { localStorage.removeItem('sifau_auth_email'); } catch {}
     try { localStorage.removeItem(SERVER_SESSION_KEY); } catch { /* */ }
   }, [currentUser]);
 

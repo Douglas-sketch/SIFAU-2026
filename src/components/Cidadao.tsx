@@ -183,7 +183,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
   const [isClassifyingDescricao, setIsClassifyingDescricao] = useState(false);
   const recognitionRef = useRef<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const SpeechRecognitionAPI = typeof window !== 'undefined'
+  const SpeechAPI = typeof window !== 'undefined'
     ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
     : null;
 
@@ -231,26 +231,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 
   // Check if Speech Recognition is supported
   useEffect(() => {
-    setSpeechSupported(!!SpeechRecognitionAPI);
-  }, []);
-
-  const requestMicrophonePermission = useCallback(async (): Promise<boolean> => {
-    setPermissionsRequested(true);
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setMicPermissionGranted(false);
-        alert('Seu navegador não suporta captura de áudio.');
-        return false;
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(track => track.stop());
-      setMicPermissionGranted(true);
-      return true;
-    } catch {
-      setMicPermissionGranted(false);
-      alert('Permissão de microfone negada. Ative o microfone para usar transcrição por voz.');
-      return false;
-    }
+    setSpeechSupported(!!SpeechAPI);
   }, []);
 
   // GPS - Get real location + reverse geocoding for street name
@@ -382,7 +363,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
 
   // Speech Recognition - Real voice to text
   const handleRecording = useCallback(() => {
-    if (!SpeechRecognitionAPI) {
+    if (!SpeechAPI) {
       alert('Gravação de voz não suportada neste navegador. Use o Chrome ou Edge.');
       return;
     }
@@ -393,7 +374,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
       return;
     }
 
-    const recognition = new SpeechRecognitionAPI();
+    const recognition = new SpeechAPI();
     recognition.lang = 'pt-BR';
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -437,7 +418,7 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
     };
 
     recognition.start();
-  }, [isRecording, ensureMicrophonePermission, SpeechRecognitionAPI]);
+  }, [isRecording, ensureMicrophonePermission, SpeechAPI]);
 
   useEffect(() => {
     return () => {
@@ -460,8 +441,8 @@ function NovaDenuncia({ onBack, onSuccess }: { onBack: () => void; onSuccess: (p
     const d = addDenuncia({
       tipo,
       endereco: endereco || 'Endereço não informado',
-      lat: gpsCoords?.lat || -22.9068 + Math.random() * 0.05,
-      lng: gpsCoords?.lng || -43.1729 + Math.random() * 0.05,
+      lat: gpsCoords?.lat ?? undefined,
+      lng: gpsCoords?.lng ?? undefined,
       descricao,
       status: 'pendente',
       sla_dias: tipo === 'Desmatamento' ? 1 : 5,

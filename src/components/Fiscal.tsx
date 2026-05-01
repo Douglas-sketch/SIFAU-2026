@@ -1248,6 +1248,11 @@ function TaskExecution({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =>
     if (!files) return;
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      const MAX_FOTO_BYTES = 5 * 1024 * 1024; // 5MB
+      if (file.size > MAX_FOTO_BYTES) {
+        alert(`Foto muito grande (${(file.size / 1024 / 1024).toFixed(1)}MB). Máximo: 5MB.`);
+        continue;
+      }
       const bytes = await file.arrayBuffer();
       const digest = await crypto.subtle.digest('SHA-256', bytes);
       const hashHex = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
