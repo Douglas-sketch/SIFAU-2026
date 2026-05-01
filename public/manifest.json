@@ -12,21 +12,21 @@
   "categories": ["government", "utilities", "productivity"],
   "icons": [
     {
-      "src": "https://lh3.googleusercontent.com/gg-dl/AOI_d__W1nUHxQb2qT7wmQz4W4mxAO-VrRU1MRLDqy1X67fWvyQDy8uFKlwZf6QqsEXk_FcHsDCUkvzT4OVfNx2i74gNtIw45Bok1_dYVE-FL6WII4Tqvs-JjIKrDPem0ojI5-WeGIJ2mZ9l_8bY1FFf_jxL4hi0TIrFkJn8mUpQm5m_ncIJAA=s192-rj",
-      "sizes": "192x192",
-      "type": "image/png",
+      "src": "/sifau-icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "https://lh3.googleusercontent.com/gg-dl/AOI_d__W1nUHxQb2qT7wmQz4W4mxAO-VrRU1MRLDqy1X67fWvyQDy8uFKlwZf6QqsEXk_FcHsDCUkvzT4OVfNx2i74gNtIw45Bok1_dYVE-FL6WII4Tqvs-JjIKrDPem0ojI5-WeGIJ2mZ9l_8bY1FFf_jxL4hi0TIrFkJn8mUpQm5m_ncIJAA=s512-rj",
+      "src": "/sifau-icon.svg",
       "sizes": "512x512",
-      "type": "image/png",
+      "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "https://lh3.googleusercontent.com/gg-dl/AOI_d__W1nUHxQb2qT7wmQz4W4mxAO-VrRU1MRLDqy1X67fWvyQDy8uFKlwZf6QqsEXk_FcHsDCUkvzT4OVfNx2i74gNtIw45Bok1_dYVE-FL6WII4Tqvs-JjIKrDPem0ojI5-WeGIJ2mZ9l_8bY1FFf_jxL4hi0TIrFkJn8mUpQm5m_ncIJAA=s512-rj",
+      "src": "/sifau-icon.svg",
       "sizes": "512x512",
-      "type": "image/png",
+      "type": "image/svg+xml",
       "purpose": "maskable"
     }
   ]
