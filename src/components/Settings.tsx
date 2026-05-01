@@ -788,7 +788,7 @@ export default function Settings({ onBack, currentTheme, onThemeChange, authEmai
       {
         icon: <Database size={22} className="text-gray-600" />,
         title: 'Armazenamento Local',
-        desc: 'Utiliza localStorage para salvar preferências (tema, configurações). Não armazena dados sensíveis localmente.',
+        desc: 'Utiliza localStorage para salvar preferências e sessão. Credenciais locais são protegidas por hash, sem senha em texto puro.',
         required: true,
         module: 'Todos',
         status: 'granted' as PermissionState,
