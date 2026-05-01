@@ -686,8 +686,9 @@ export async function userAccountExists(email: string): Promise<boolean> {
       .eq('email', email.toLowerCase())
       .limit(1)
       .maybeSingle();
-    if (error) return false;
-    return !!data;
+
+    if (appErr) return false;
+    return !!appUser;
   } catch {
     return false;
   }
