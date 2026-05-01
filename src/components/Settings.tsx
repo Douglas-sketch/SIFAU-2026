@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { getProfilePhoto, saveProfilePhoto, removeProfilePhoto, compressImage } from '../lib/profilePhoto';
 
+const DPO_EMAIL = (window as any).__SIFAU_DPO_EMAIL || 'dpo@sifau.prefeitura.gov.br';
+
 export type AppTheme = 'default' | 'dark';
 
 export interface AppSettings {
@@ -706,7 +708,7 @@ export default function Settings({ onBack, currentTheme, onThemeChange, authEmai
               { title: '5. COMPARTILHAMENTO DE DADOS', text: '5.1. Dados de denúncias podem ser compartilhados entre fiscais e gerentes para fins de fiscalização.\n5.2. Dados podem ser compartilhados com o Ministério Público, quando solicitado judicialmente.\n5.3. Não há compartilhamento de dados com terceiros privados.\n5.4. Dados do denunciante anônimo NUNCA são compartilhados.' },
               { title: '6. DIREITOS DO TITULAR', text: 'Conforme a LGPD, o titular dos dados tem direito a:\n• Confirmação da existência de tratamento de seus dados\n• Acesso aos seus dados pessoais\n• Correção de dados incompletos ou desatualizados\n• Eliminação de dados desnecessários\n• Portabilidade dos dados\n• Revogação do consentimento' },
               { title: '7. COOKIES E DADOS LOCAIS', text: 'O SIFAU utiliza armazenamento local (localStorage) para manter preferências do usuário, como tema de cores e configurações de acessibilidade. Nenhum cookie de rastreamento é utilizado.' },
-              { title: '8. ENCARREGADO (DPO)', text: 'Para exercer seus direitos ou esclarecer dúvidas sobre o tratamento de dados pessoais, entre em contato com o Encarregado de Proteção de Dados através do e-mail: douglasgabriel9628@gmail.com' },
+              { title: '8. ENCARREGADO (DPO)', text: `Para exercer seus direitos ou esclarecer dúvidas sobre o tratamento de dados pessoais, entre em contato com o Encarregado de Proteção de Dados através do e-mail: ${DPO_EMAIL}` },
             ].map((section, i) => (
               <div key={i}>
                 <h3 className="text-base md:text-lg font-bold mt-6" style={{ color: 'var(--text-heading)' }}>{section.title}</h3>
@@ -1172,10 +1174,10 @@ export default function Settings({ onBack, currentTheme, onThemeChange, authEmai
 
               <div className="space-y-2">
                 <button disabled className="w-full rounded-xl py-3 md:py-4 font-medium text-sm md:text-base cursor-not-allowed flex items-center justify-center gap-2" style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-muted)' }}>
-                  <HeadphonesIcon size={18} /> Chat ao Vivo — Indisponível
+                  <HeadphonesIcon size={18} /> Chat ao Vivo — Indisponível <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Em breve</span>
                 </button>
                 <button disabled className="w-full rounded-xl py-3 md:py-4 font-medium text-sm md:text-base cursor-not-allowed flex items-center justify-center gap-2" style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-muted)' }}>
-                  <Phone size={18} /> Ligação — Indisponível
+                  <Phone size={18} /> Ligação — Indisponível <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Em breve</span>
                 </button>
               </div>
             </div>
@@ -1185,7 +1187,7 @@ export default function Settings({ onBack, currentTheme, onThemeChange, authEmai
               <div className="space-y-3">
                 {/* Email */}
                 <a
-                  href="mailto:douglasgabriel9628@gmail.com"
+                  href={`mailto:${DPO_EMAIL}`}
                   className="flex items-start gap-3 rounded-lg p-3 transition border"
                   style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-color)' }}
                 >
@@ -1194,7 +1196,7 @@ export default function Settings({ onBack, currentTheme, onThemeChange, authEmai
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold" style={{ color: 'var(--text-heading)' }}>E-mail</p>
-                    <p className="text-xs font-mono truncate" style={{ color: 'var(--accent-primary)' }}>douglasgabriel9628@gmail.com</p>
+                    <p className="text-xs font-mono truncate" style={{ color: 'var(--accent-primary)' }}>{DPO_EMAIL}</p>
                     <div className="flex items-center gap-2 mt-1">
                       <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-medium">Temporário</span>
                       <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Resposta em até 48h</span>
@@ -1282,7 +1284,7 @@ export default function Settings({ onBack, currentTheme, onThemeChange, authEmai
                     Após 30 dias, a exclusão será <strong>permanente e irreversível</strong>.
                   </p>
                   <p className="text-[10px] text-blue-600 mt-2">
-                    📧 Contato: douglasgabriel9628@gmail.com | 📞 (81) 98477-6800
+                    📧 Contato: {DPO_EMAIL} | 📞 (81) 98477-6800
                   </p>
                 </div>
 

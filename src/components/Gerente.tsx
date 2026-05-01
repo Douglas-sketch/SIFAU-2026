@@ -3,13 +3,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Home, Users, ClipboardCheck, LogOut, ArrowLeft, CheckCircle, MapPin,
   Clock, Eye, FileText, DollarSign, ChevronRight, AlertCircle, User, Award, Camera, ImageIcon,
-  Search, X, Filter, Hash, Settings, XCircle, RotateCcw, MessageSquare
+  Search, X, Filter, Hash, Settings, XCircle, RotateCcw, MessageSquare, ShieldCheck
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Denuncia, OS_TABLE } from '../types';
 import { PhotoGallery } from './PhotoViewer';
 import Mensagens from './Mensagens';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, AreaChart, Area, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
+import { exportToPDF } from '../lib/pdfExporter';
 
 const statusLabels: Record<string, { label: string; color: string }> = {
   pendente: { label: 'Pendente', color: 'bg-yellow-500' },
@@ -182,18 +183,21 @@ function DesignarView({ denuncia, onBack }: { denuncia: Denuncia; onBack: () => 
   const [selectedFiscal, setSelectedFiscal] = useState(denuncia.fiscal_id || '');
   const [osSelections, setOsSelections] = useState<Record<string, number>>({});
   const [showSuccess, setShowSuccess] = useState(false);
+  const [designando, setDesignando] = useState(false);
 
   const totalPontos = Object.entries(osSelections).reduce((acc, [codigo, qty]) => {
     const os = OS_TABLE.find(o => o.codigo === codigo);
     return acc + (os ? os.pontos * qty : 0);
   }, 0);
 
-  const handleDesignar = () => {
+  const handleDesignar = async () => {
     if (!selectedFiscal) {
       addNotification('Selecione um fiscal!', 'warning');
       return;
     }
-    designarDenuncia(denuncia.id, selectedFiscal, totalPontos);
+    setDesignando(true);
+    await designarDenuncia(denuncia.id, selectedFiscal, totalPontos);
+    setDesignando(false);
     setShowSuccess(true);
     setTimeout(() => { setShowSuccess(false); onBack(); }, 2000);
   };
@@ -325,10 +329,10 @@ function DesignarView({ denuncia, onBack }: { denuncia: Denuncia; onBack: () => 
 
           <button
             onClick={handleDesignar}
-            disabled={!selectedFiscal}
+            disabled={!selectedFiscal || designando}
             className="w-full bg-indigo-700 text-white rounded-xl py-4 md:py-5 font-bold text-lg md:text-xl disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            <User size={20} /> Designar Fiscal
+            <User size={20} /> {designando ? 'Designando...' : 'Designar Fiscal'}
           </button>
         </div>
       </div>
@@ -347,6 +351,12 @@ function DenunciaDetail({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =
   const fiscal = profiles.find(p => p.id === denuncia.fiscal_id);
   const relatorio = getRelatorio(denuncia.id);
   const auto = getAuto(denuncia.id);
+  const evidenceRows = relatorio?.evidencia_fotos || [];
+  const evidenciasVerificadas = relatorio
+    ? relatorio.fotos.length > 0 &&
+      evidenceRows.length >= relatorio.fotos.length &&
+      evidenceRows.slice(0, relatorio.fotos.length).every(e => !!e?.file_hash)
+    : false;
 
   const edicoesCidadao = historico
     .filter(h => h.denuncia_id === denuncia.id && h.tipo_acao === 'Denúncia Editada')
@@ -365,6 +375,14 @@ function DenunciaDetail({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =
     setShowRejectModal(false);
     setShowRejectSuccess(true);
     setTimeout(() => { setShowRejectSuccess(false); onBack(); }, 3000);
+  };
+
+  const handleGerarCertificadoEvidencia = () => {
+    const den = denuncias.find(d => d.id === selectedDenunciaId);
+    if (!den) return;
+    const rel = getRelatorio(den.id);
+    const aut = getAuto(den.id);
+    exportToPDF(den, rel, aut);
   };
 
   if (showDesignar) {
@@ -519,6 +537,11 @@ function DenunciaDetail({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =
                 <h3 className="font-bold text-gray-700 text-sm md:text-base mb-2 flex items-center gap-2">
                   <FileText size={14} className="text-blue-600" /> Relatório do Fiscal
                 </h3>
+                {evidenciasVerificadas && (
+                  <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-green-100 text-green-700 px-2 py-1 text-xs font-semibold">
+                    <ShieldCheck size={13} /> Evidências verificadas
+                  </div>
+                )}
                 <p className="text-xs md:text-sm text-gray-600 whitespace-pre-line bg-gray-50 rounded-lg p-3 md:p-4 max-h-60 md:max-h-80 overflow-y-auto font-mono leading-relaxed">{relatorio.texto}</p>
                 <div className="flex flex-col gap-1 mt-2 text-xs md:text-sm">
                   {relatorio.os_2_0 && <span className="text-blue-600 font-medium">✓ O.S. 2.0 — Ordem de serviço cumprida (+50pts)</span>}
@@ -545,6 +568,15 @@ function DenunciaDetail({ denuncia, onBack }: { denuncia: Denuncia; onBack: () =
                     <p className="text-xs md:text-sm text-gray-500 mb-1">Assinatura Digital:</p>
                     <img src={relatorio.assinatura_base64} alt="Assinatura" className="h-14 md:h-16 border rounded-lg bg-gray-50 p-1" />
                   </div>
+                )}
+
+                {denuncia.status === 'concluida' && (
+                  <button
+                    onClick={handleGerarCertificadoEvidencia}
+                    className="mt-3 inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs md:text-sm font-semibold text-blue-700 hover:bg-blue-100"
+                  >
+                    <FileText size={14} /> Gerar Certificado de Evidência (PDF)
+                  </button>
                 )}
               </div>
             )}
@@ -1116,6 +1148,13 @@ function AllDenunciasView({ onSelect }: { onSelect: (d: Denuncia) => void }) {
                 </motion.button>
               );
             })}
+          </div>
+        )}
+        {isOnline && denuncias.length === 0 && (
+          <div className="space-y-3">
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="h-20 rounded-xl bg-gradient-to-r from-gray-200 via-gray-100 to-gray-200 animate-pulse" />
+            ))}
           </div>
         )}
       </div>
